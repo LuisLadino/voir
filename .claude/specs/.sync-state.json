@@ -1,0 +1,1 @@
+{"lastSync": "2026-03-14T09:41:00Z", "stack": "vscode-extension + TypeScript + Vitest + esbuild + pnpm", "status": "complete", "pillars": "Four (Profile, Memory, Context, Patterns)", "governance": ["CHANGELOG.md", "CONTRIBUTING.md"]}

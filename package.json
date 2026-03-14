@@ -1,0 +1,94 @@
+{
+  "name": "voir",
+  "displayName": "VOIR",
+  "description": "Visual Observability for Intelligent Runtimes - AI coding assistant session observability",
+  "version": "0.1.0",
+  "publisher": "luisladino",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/luisladino/voir"
+  },
+  "engines": {
+    "vscode": "^1.105.0"
+  },
+  "categories": [
+    "Other",
+    "Visualization"
+  ],
+  "activationEvents": [
+    "workspaceContains:.claude/"
+  ],
+  "main": "./dist/extension.js",
+  "contributes": {
+    "viewsContainers": {
+      "activitybar": [
+        {
+          "id": "voir",
+          "title": "VOIR",
+          "icon": "resources/voir-icon.svg"
+        }
+      ]
+    },
+    "views": {
+      "voir": [
+        {
+          "id": "voir.sessions",
+          "name": "Sessions"
+        },
+        {
+          "id": "voir.toolCalls",
+          "name": "Tool Calls"
+        },
+        {
+          "id": "voir.fileChanges",
+          "name": "File Changes"
+        }
+      ]
+    },
+    "commands": [
+      {
+        "command": "voir.showDashboard",
+        "title": "VOIR: Show Dashboard"
+      },
+      {
+        "command": "voir.refresh",
+        "title": "VOIR: Refresh Data"
+      },
+      {
+        "command": "voir.openSession",
+        "title": "VOIR: Open Session Details"
+      }
+    ]
+  },
+  "scripts": {
+    "vscode:prepublish": "pnpm run build",
+    "build": "esbuild ./src/extension.ts --bundle --outfile=dist/extension.js --external:vscode --format=cjs --platform=node",
+    "watch": "pnpm run build --watch",
+    "dev": "pnpm run watch",
+    "lint": "eslint src --ext ts",
+    "format": "prettier --write \"src/**/*.ts\"",
+    "format:check": "prettier --check \"src/**/*.ts\"",
+    "type-check": "tsc --noEmit",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "test:coverage": "vitest run --coverage",
+    "package": "vsce package --no-dependencies",
+    "publish": "vsce publish --no-dependencies"
+  },
+  "devDependencies": {
+    "@types/node": "^20.11.0",
+    "@types/vscode": "^1.105.0",
+    "@typescript-eslint/eslint-plugin": "^8.0.0",
+    "@typescript-eslint/parser": "^8.0.0",
+    "@vscode/vsce": "^3.0.0",
+    "esbuild": "^0.24.0",
+    "eslint": "^9.0.0",
+    "prettier": "^3.4.0",
+    "typescript": "^5.7.0",
+    "vitest": "^3.0.0"
+  },
+  "dependencies": {
+    "@vscode/webview-ui-toolkit": "^1.4.0"
+  }
+}

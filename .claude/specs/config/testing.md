@@ -1,79 +1,109 @@
 # Testing
 
-Project-specific testing configuration.
-
----
-
 ## Framework
 
-Test runner: _Vitest/Jest/Playwright/Cypress_
-
----
+**Test Runner:** Vitest 3.x
+**Environment:** Node.js (not jsdom - extension runs in Node)
+**Coverage:** V8 provider
 
 ## Structure
 
 ```
-tests/
-├── unit/           # Unit tests
-├── integration/    # Integration tests
-└── e2e/            # End-to-end tests
+test/
+├── unit/           # Unit tests - isolated, fast
+├── integration/    # Integration tests - multiple modules
+└── fixtures/       # Test data (sessions, events)
 ```
-
-Or colocated: `src/components/Button.test.tsx`
-
----
 
 ## Commands
 
 ```bash
-npm test              # Run all tests
-npm test -- --watch   # Watch mode
-npm run test:e2e      # E2E tests
-npm run coverage      # Coverage report
+pnpm test              # Run all tests once
+pnpm test:watch        # Watch mode (re-run on changes)
+pnpm test:coverage     # Generate coverage report
 ```
-
----
 
 ## Coverage
 
-Target: _e.g., 80%_
+**Target:** 80%+ on business logic
 
-Focus on:
-- Business logic
-- API handlers
-- Critical user flows
+**Focus on:**
+- Data parsing (`src/data/`)
+- Metrics calculation (`src/analysis/`)
+- Type guards (`src/types/`)
+- Utility functions (`src/utils/`)
 
-Skip:
+**Skip:**
+- Type definitions (no runtime code)
+- VS Code integration layer (mocked boundary)
 - Config files
-- Type definitions
-- Generated code
 
----
+## VS Code Mocking
 
-## What to Test
+The `vscode` module doesn't exist at test runtime. Vitest config includes a virtual module plugin:
 
-| Type | What | Tools |
-|------|------|-------|
-| Unit | Functions, utils, hooks | Vitest/Jest |
-| Integration | Components with deps | Testing Library |
-| E2E | User flows | Playwright/Cypress |
+```typescript
+// vitest.config.ts
+plugins: [{
+  name: 'virtual-vscode',
+  resolveId(id) { if (id === 'vscode') return 'vscode'; },
+  load(id) { if (id === 'vscode') return 'export default {}'; },
+}]
+```
 
----
+Mock specific APIs in tests:
+
+```typescript
+vi.mock('vscode', () => ({
+  window: { showInformationMessage: vi.fn() },
+  workspace: { fs: { readFile: vi.fn() } },
+  // ...
+}));
+```
 
 ## Patterns
 
+### AAA Pattern
+
 ```typescript
-describe('Component', () => {
-  it('should do something', () => {
-    // Arrange
-    // Act
-    // Assert
-  });
+it('should calculate session duration', () => {
+  // Arrange
+  const session = createTestSession({ duration: 3600000 });
+
+  // Act
+  const metrics = calculateMetrics(session);
+
+  // Assert
+  expect(metrics.durationMs).toBe(3600000);
 });
 ```
 
----
+### Fixtures
 
-## Notes
+Use shared test data from `test/fixtures/`:
 
-_Add project-specific testing conventions here_
+```typescript
+import { validSession, inProgressSession } from '../fixtures/sessions';
+
+it('should handle completed sessions', () => {
+  const result = processSession(validSession);
+  expect(result.status).toBe('completed');
+});
+```
+
+## What to Test
+
+| Layer | What | How |
+|-------|------|-----|
+| Types | Type guards | Unit tests |
+| Data | Parsing, transformation | Unit tests with fixtures |
+| Analysis | Metrics, patterns | Unit tests |
+| Views | TreeItem creation | Unit tests (mock VS Code) |
+| Integration | Full data flow | Integration tests |
+
+## Anti-Patterns
+
+- Don't test VS Code API behavior (mock boundary)
+- Don't test implementation details (test behavior)
+- Don't use timing-dependent assertions
+- Don't mock everything - test real logic
