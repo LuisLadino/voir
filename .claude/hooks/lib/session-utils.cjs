@@ -1,219 +1,639 @@
 #!/usr/bin/env node
 
 /**
- * Shared utilities for session tracking hooks
+ * Shared utilities for session tracking hooks.
  *
- * Session tracking is GLOBAL (framework telemetry):
- * ~/.gemini/antigravity/brain/tracking/sessions/{session-id}.json
+ * Persistence lives at ~/.claude/projects/{workspace-key}/
+ *   tracking/{session-id}.jsonl  — append-only event log (one JSON per line)
+ *   tracking/.active-session     — session id cache
+ *   hook-errors.log              — error log
  *
- * Project context is per-workspace:
- * ~/.gemini/antigravity/brain/{workspace-uuid}/task.md, decisions.md, etc.
+ * Tracking is an append-only JSONL event log. Writers call appendTrackingEvent.
+ * Readers call readTrackingEvents (raw) or readTrackingState (reconstructed).
+ *
+ * This shape solves the multi-writer race: fs.appendFileSync is atomic for
+ * small (<PIPE_BUF) writes on POSIX, so parallel PostToolUse hooks can log
+ * events without corrupting each other's data or losing updates.
  */
 
 const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
+const { execSync } = require('child_process');
 
 const HOME = process.env.HOME || process.env.USERPROFILE;
-const BRAIN_DIR = path.join(HOME, '.gemini/antigravity/brain');
-const TRACKING_DIR = path.join(BRAIN_DIR, 'tracking/sessions');
+const PROJECTS_DIR = path.join(HOME, '.claude/projects');
 
-/**
- * Find the brain folder for a workspace
- * Same logic as session-context.js
- */
-function findWorkspaceBrain(workspacePath) {
-  if (!fs.existsSync(BRAIN_DIR)) {
-    fs.mkdirSync(BRAIN_DIR, { recursive: true });
-  }
+// getWorkspaceKey is called 2-3 times per hook process (via getTrackingDir in
+// both getSessionId and appendTrackingEvent). Memoize per input so we only
+// fork `git rev-parse` once per hook invocation.
+const _workspaceKeyCache = new Map();
 
-  // Look for existing session folder matching this workspace
-  const sessions = fs.readdirSync(BRAIN_DIR).filter(f => {
-    const fullPath = path.join(BRAIN_DIR, f);
-    return fs.statSync(fullPath).isDirectory() && f !== 'tempmediaStorage';
-  });
+function getWorkspaceKey(workspacePath) {
+  const input = workspacePath || process.cwd();
+  if (_workspaceKeyCache.has(input)) return _workspaceKeyCache.get(input);
 
-  for (const uuid of sessions) {
-    const statePath = path.join(BRAIN_DIR, uuid, 'session_state.json');
-    if (fs.existsSync(statePath)) {
-      try {
-        const state = JSON.parse(fs.readFileSync(statePath, 'utf8'));
-        const storedPath = (state.workspace || '').split(' -> ')[0];
-        if (storedPath === workspacePath || workspacePath.startsWith(storedPath)) {
-          return path.join(BRAIN_DIR, uuid);
-        }
-      } catch (e) {}
-    }
-  }
-
-  // No existing folder, create new one
-  const newUuid = crypto.randomUUID();
-  const newPath = path.join(BRAIN_DIR, newUuid);
-  fs.mkdirSync(newPath, { recursive: true });
-
-  // Initialize session_state.json with workspace
-  fs.writeFileSync(
-    path.join(newPath, 'session_state.json'),
-    JSON.stringify({ workspace: workspacePath, type: 'auto-created' }, null, 2)
-  );
-
-  return newPath;
+  let root = input;
+  try {
+    root = execSync('git rev-parse --show-toplevel', {
+      encoding: 'utf8',
+      stdio: ['pipe', 'pipe', 'pipe'],
+      cwd: root
+    }).trim();
+  } catch (e) {}
+  const key = '-' + root.replace(/\//g, '-').slice(1);
+  _workspaceKeyCache.set(input, key);
+  return key;
 }
 
-/**
- * Generate a session ID
- * Uses process start time + pid for uniqueness within a Claude session
- */
+function getProjectDir(workspacePath) {
+  const key = getWorkspaceKey(workspacePath);
+  return path.join(PROJECTS_DIR, key);
+}
+
+function getTrackingDir(workspacePath) {
+  return path.join(getProjectDir(workspacePath), 'tracking');
+}
+
 function generateSessionId() {
-  // Use timestamp + random for uniqueness
   const timestamp = Date.now();
   const random = crypto.randomBytes(4).toString('hex');
   return `${timestamp}-${random}`;
 }
 
-/**
- * Get session ID - prefer Claude Code's session_id from hook input
- * Falls back to generating our own if not provided
- *
- * @param {string} [claudeSessionId] - Claude Code's session_id from hook input
- */
+// Sanitize any value used as a filename to prevent path traversal if a
+// session id ever contains `..`, `/`, or other separators.
+function sanitizeSessionId(sessionId) {
+  return String(sessionId).replace(/[^a-zA-Z0-9_-]/g, '_');
+}
+
 function getSessionId(claudeSessionId) {
-  if (!fs.existsSync(TRACKING_DIR)) {
-    fs.mkdirSync(TRACKING_DIR, { recursive: true });
-  }
+  if (claudeSessionId) return sanitizeSessionId(claudeSessionId);
 
-  // Use Claude Code's session_id if provided (preferred - eliminates fragmentation)
-  if (claudeSessionId) {
-    return claudeSessionId;
-  }
+  const trackingDir = getTrackingDir();
+  if (!fs.existsSync(trackingDir)) fs.mkdirSync(trackingDir, { recursive: true });
 
-  // Fallback: use our own session ID with timeout logic
-  const activeSessionFile = path.join(TRACKING_DIR, '.active-session');
-
+  const activeSessionFile = path.join(trackingDir, '.active-session');
   if (fs.existsSync(activeSessionFile)) {
     try {
       const data = JSON.parse(fs.readFileSync(activeSessionFile, 'utf8'));
-      const age = Date.now() - data.createdAt;
-      // If less than 5 minutes old, same session (increased from 30s)
-      if (age < 300000) {
-        return data.sessionId;
+      if (Date.now() - data.createdAt < 300000) {
+        return sanitizeSessionId(data.sessionId);
       }
     } catch (e) {}
   }
 
-  // Generate new session ID
   const sessionId = generateSessionId();
-  fs.writeFileSync(activeSessionFile, JSON.stringify({
-    sessionId,
-    createdAt: Date.now()
-  }));
-
+  fs.writeFileSync(activeSessionFile, JSON.stringify({ sessionId, createdAt: Date.now() }));
   return sessionId;
 }
 
-/**
- * Get path to session tracking file (global tracking dir)
- */
-function getSessionTrackingPath(sessionId) {
-  return path.join(TRACKING_DIR, `${sessionId}.json`);
+function getSessionTrackingPath(sessionId, workspacePath) {
+  return path.join(getTrackingDir(workspacePath), `${sessionId}.jsonl`);
 }
 
 /**
- * Load session tracking data
+ * Append one event to the session log. Atomic on POSIX for small writes.
+ * Event must be JSON-serializable. `timestamp` is added automatically if
+ * not provided. `type` is required so readers can reconstruct state.
  */
-function loadSessionTracking(sessionId) {
-  const trackingPath = getSessionTrackingPath(sessionId);
+function appendTrackingEvent(sessionId, event, workspacePath) {
+  if (!event || typeof event !== 'object' || !event.type) {
+    throw new Error('appendTrackingEvent: event must be an object with a `type` field');
+  }
+  const trackingPath = getSessionTrackingPath(sessionId, workspacePath);
+  const payload = { timestamp: event.timestamp || new Date().toISOString(), ...event };
+  // Wrap with leading + trailing `\n` (2 extra bytes per event) so a partial
+  // tail from a crashed write can't merge with this event's JSON. Readers
+  // split on newlines and skip empty lines, so the extra bytes are harmless.
+  const line = '\n' + JSON.stringify(payload) + '\n';
+
   try {
-    const content = fs.readFileSync(trackingPath, 'utf8');
-    return JSON.parse(content);
+    fs.appendFileSync(trackingPath, line);
+  } catch (err) {
+    if (err.code === 'ENOENT') {
+      fs.mkdirSync(path.dirname(trackingPath), { recursive: true });
+      fs.appendFileSync(trackingPath, line);
+    } else {
+      throw err;
+    }
+  }
+}
+
+/**
+ * Read raw events from the session log. Malformed lines are skipped so a
+ * partial write from a crashed hook doesn't break the whole read.
+ */
+function readTrackingEvents(sessionId, workspacePath) {
+  const trackingPath = getSessionTrackingPath(sessionId, workspacePath);
+  let content;
+  try {
+    content = fs.readFileSync(trackingPath, 'utf8');
   } catch {
-    return {
-      sessionId,
-      sessionStart: new Date().toISOString(),
-      workspace: process.cwd(),
-      filesModified: [],
-      filesCreated: [],
-      operations: [],
-      commands: []
-    };
+    return [];
   }
+
+  const events = [];
+  for (const line of content.split('\n')) {
+    const trimmed = line.trim();
+    if (!trimmed) continue;
+    try {
+      events.push(JSON.parse(trimmed));
+    } catch {
+      // Skip malformed line; partial writes from crashes land here.
+    }
+  }
+  return events;
 }
 
 /**
- * Save session tracking data
+ * Rebuild the legacy tracking-state shape from the event log.
+ * Keeps callers that read `state.tools[]`, `state.commands[]`, etc. working.
  */
-function saveSessionTracking(sessionId, data) {
-  if (!fs.existsSync(TRACKING_DIR)) {
-    fs.mkdirSync(TRACKING_DIR, { recursive: true });
-  }
-
-  const trackingPath = getSessionTrackingPath(sessionId);
-  fs.writeFileSync(trackingPath, JSON.stringify(data, null, 2));
-}
-
-/**
- * Initialize a new session
- */
-function initSession() {
-  const sessionId = generateSessionId();
-
-  if (!fs.existsSync(TRACKING_DIR)) {
-    fs.mkdirSync(TRACKING_DIR, { recursive: true });
-  }
-
-  // Write active session marker
-  const activeSessionFile = path.join(TRACKING_DIR, '.active-session');
-  fs.writeFileSync(activeSessionFile, JSON.stringify({
+function readTrackingState(sessionId, workspacePath) {
+  const events = readTrackingEvents(sessionId, workspacePath);
+  const state = {
     sessionId,
-    createdAt: Date.now()
-  }));
-
-  // Initialize tracking data
-  const trackingData = {
-    sessionId,
-    sessionStart: new Date().toISOString(),
-    workspace: process.cwd(),
+    sessionStart: null,
+    workspace: null,
     filesModified: [],
     filesCreated: [],
     operations: [],
-    commands: []
+    commands: [],
+    tools: [],
+    failures: [],
+    subagents: [],
+    injections: [],
+    skillInvocations: [],
+    phaseMenuEmitted: [],
+    lastActivity: null
   };
 
-  saveSessionTracking(sessionId, trackingData);
+  for (const ev of events) {
+    if (ev.timestamp) state.lastActivity = ev.timestamp;
+    const { type, ...payload } = ev;
+    switch (type) {
+      case 'session_init':
+        state.sessionStart = ev.timestamp;
+        state.workspace = payload.workspace;
+        break;
+      case 'tool':
+        state.tools.push(payload);
+        break;
+      case 'command':
+        state.commands.push(payload);
+        break;
+      case 'file_change': {
+        const { op, file } = payload;
+        if (op === 'create' && !state.filesCreated.includes(file)) {
+          state.filesCreated.push(file);
+        } else if (op === 'modify' && !state.filesModified.includes(file)) {
+          state.filesModified.push(file);
+        }
+        state.operations.push(payload);
+        break;
+      }
+      case 'failure':
+        state.failures.push(payload);
+        break;
+      case 'subagent_start':
+        state.subagents.push({ ...payload, startedAt: ev.timestamp });
+        break;
+      case 'subagent_stop': {
+        const match = state.subagents.find(s => s.id === payload.id);
+        if (match) {
+          match.stoppedAt = ev.timestamp;
+          if (match.startedAt) {
+            match.durationSeconds = Math.floor(
+              (new Date(ev.timestamp) - new Date(match.startedAt)) / 1000
+            );
+          }
+        } else {
+          state.subagents.push({ ...payload, stoppedAt: ev.timestamp });
+        }
+        break;
+      }
+      case 'injection':
+        state.injections.push(payload);
+        break;
+      case 'skill_invocation':
+        state.skillInvocations.push({ ...payload, timestamp: ev.timestamp });
+        break;
+      case 'phase_menu_emitted':
+        state.phaseMenuEmitted.push({ ...payload, timestamp: ev.timestamp });
+        break;
+    }
+  }
+  return state;
+}
+
+/**
+ * Prompt-scoped variant of readTrackingState. Same observability shape, but
+ * only events after the most recent `prompt_start` contribute. State is
+ * reset at every prompt_start event. When no prompt_start has been written,
+ * returns empty collections. The caller treats empty collections as
+ * "nothing to check" because Stop-time observability is a nudge, not a gate.
+ *
+ * Used by verify-before-stop's skill-completion check so skill invocations
+ * from prior turns do not re-trigger at every subsequent Stop event.
+ * See #231. Tracking is append-only and persists through context
+ * compaction, so without scoping, every Skill invocation ever made in the
+ * session re-appears at every Stop.
+ */
+function readPromptScopedTrackingState(sessionId, workspacePath) {
+  const events = readTrackingEvents(sessionId, workspacePath);
+  const state = {
+    sessionId,
+    sessionStart: null,
+    workspace: null,
+    filesModified: [],
+    filesCreated: [],
+    operations: [],
+    commands: [],
+    tools: [],
+    failures: [],
+    subagents: [],
+    injections: [],
+    skillInvocations: [],
+    phaseMenuEmitted: [],
+    lastActivity: null,
+    promptStart: null
+  };
+
+  let inScope = false;
+  for (const ev of events) {
+    if (ev.type === 'prompt_start') {
+      state.filesModified = [];
+      state.filesCreated = [];
+      state.operations = [];
+      state.commands = [];
+      state.tools = [];
+      state.failures = [];
+      state.subagents = [];
+      state.injections = [];
+      state.skillInvocations = [];
+      state.phaseMenuEmitted = [];
+      state.lastActivity = ev.timestamp || null;
+      state.promptStart = ev.timestamp || null;
+      inScope = true;
+      continue;
+    }
+    if (!inScope) continue;
+    if (ev.timestamp) state.lastActivity = ev.timestamp;
+    const { type, ...payload } = ev;
+    switch (type) {
+      case 'session_init':
+        state.sessionStart = ev.timestamp;
+        state.workspace = payload.workspace;
+        break;
+      case 'tool':
+        state.tools.push(payload);
+        break;
+      case 'command':
+        state.commands.push(payload);
+        break;
+      case 'file_change': {
+        const { op, file } = payload;
+        if (op === 'create' && !state.filesCreated.includes(file)) {
+          state.filesCreated.push(file);
+        } else if (op === 'modify' && !state.filesModified.includes(file)) {
+          state.filesModified.push(file);
+        }
+        state.operations.push(payload);
+        break;
+      }
+      case 'failure':
+        state.failures.push(payload);
+        break;
+      case 'subagent_start':
+        state.subagents.push({ ...payload, startedAt: ev.timestamp });
+        break;
+      case 'subagent_stop': {
+        const match = state.subagents.find(s => s.id === payload.id);
+        if (match) {
+          match.stoppedAt = ev.timestamp;
+          if (match.startedAt) {
+            match.durationSeconds = Math.floor(
+              (new Date(ev.timestamp) - new Date(match.startedAt)) / 1000
+            );
+          }
+        } else {
+          state.subagents.push({ ...payload, stoppedAt: ev.timestamp });
+        }
+        break;
+      }
+      case 'injection':
+        state.injections.push(payload);
+        break;
+      case 'skill_invocation':
+        state.skillInvocations.push({ ...payload, timestamp: ev.timestamp });
+        break;
+      case 'phase_menu_emitted':
+        state.phaseMenuEmitted.push({ ...payload, timestamp: ev.timestamp });
+        break;
+    }
+  }
+  return state;
+}
+
+/**
+ * Reduce tracking events into the state that per-prompt enforcement hooks
+ * need. Scans forward and resets state at every `prompt_start`, so only
+ * events from the most recent prompt count. Fail-closed when no
+ * `prompt_start` has been written — returns empty enforcement state.
+ *
+ * Shape:
+ *   {
+ *     specsRead: string[],            // spec names whose files were read
+ *     planSkillRead: boolean,         // plan skill read
+ *     lastVoiceBlockedHash: string|null,
+ *     promptStart: string|null        // timestamp of most recent prompt_start
+ *   }
+ */
+function readPromptScopedState(sessionId, workspacePath) {
+  const events = readTrackingEvents(sessionId, workspacePath);
+  const state = {
+    specsRead: [],
+    planSkillRead: false,
+    lastVoiceBlockedHash: null,
+    promptStart: null
+  };
+
+  let inScope = false;
+  for (const ev of events) {
+    if (ev.type === 'prompt_start') {
+      state.specsRead = [];
+      state.planSkillRead = false;
+      state.lastVoiceBlockedHash = null;
+      state.promptStart = ev.timestamp || null;
+      inScope = true;
+      continue;
+    }
+    if (!inScope) continue;
+    switch (ev.type) {
+      case 'spec_read':
+        if (ev.name && !state.specsRead.includes(ev.name)) {
+          state.specsRead.push(ev.name);
+        }
+        break;
+      case 'plan_skill_read':
+        state.planSkillRead = true;
+        break;
+      case 'voice_blocked':
+        state.lastVoiceBlockedHash = ev.hash || null;
+        break;
+    }
+  }
+
+  return state;
+}
+
+/**
+ * Session-wide variant of readPromptScopedState for subagent contexts. Scans
+ * every `spec_read`, `plan_skill_read`, and `voice_blocked` event in the
+ * session tracking file without requiring a `prompt_start` boundary.
+ *
+ * Why this exists: subagents don't fire UserPromptSubmit, so no
+ * `prompt_start` event is ever written to their tracking file. The
+ * prompt-scoped reader fails closed in that context and blocks all edits
+ * even after required specs have been read. This reader treats the entire
+ * subagent session as one enforcement scope. Single-turn by design; safe
+ * because a subagent has no follow-up prompts to isolate from.
+ *
+ * Callers: `enforce-specs.cjs` when `data.agent_id` is present. Do not use
+ * in main-session contexts — `readPromptScopedState` is the correct reader
+ * there because it resets state at each user prompt.
+ */
+function readSessionScopedSpecState(sessionId, workspacePath) {
+  const events = readTrackingEvents(sessionId, workspacePath);
+  const state = {
+    specsRead: [],
+    planSkillRead: false,
+    lastVoiceBlockedHash: null,
+    promptStart: null
+  };
+
+  for (const ev of events) {
+    switch (ev.type) {
+      case 'spec_read':
+        if (ev.name && !state.specsRead.includes(ev.name)) {
+          state.specsRead.push(ev.name);
+        }
+        break;
+      case 'plan_skill_read':
+        state.planSkillRead = true;
+        break;
+      case 'voice_blocked':
+        state.lastVoiceBlockedHash = ev.hash || null;
+        break;
+    }
+  }
+
+  return state;
+}
+
+/**
+ * Pick the most recent tracking session file (< 1 hour old). Shared by the
+ * two getRecent* reducers so the window heuristic lives in one place.
+ */
+function findRecentSessionId(workspacePath) {
+  const trackingDir = getTrackingDir(workspacePath);
+  if (!fs.existsSync(trackingDir)) return null;
+
+  const oneHourAgo = Date.now() - 60 * 60 * 1000;
+  let best = null;
+  for (const file of fs.readdirSync(trackingDir)) {
+    if (!file.endsWith('.jsonl')) continue;
+    const mtime = fs.statSync(path.join(trackingDir, file)).mtime.getTime();
+    if (mtime <= oneHourAgo) continue;
+    if (!best || mtime > best.mtime) {
+      best = { sessionId: file.replace(/\.jsonl$/, ''), mtime };
+    }
+  }
+  return best ? best.sessionId : null;
+}
+
+// Three UserPromptSubmit injection modules (spec-triggers, lens-router via
+// lib/phase.cjs, phase-menu) each call one of these getRecent* helpers in the
+// same hook process, and each call re-runs findRecentSessionId + reads + JSON-
+// parses the entire session JSONL. On 5000+ line sessions that's ~13ms of
+// redundant work per prompt. Hook processes are short-lived (one per
+// UserPromptSubmit) and all three reads happen before any writes in the same
+// process, so a module-local cache keyed by resolved sessionId is safe with
+// no TTL and no invalidation. Cache miss path is unchanged.
+const _recentSessionIdCache = new Map();
+const _trackingStateCache = new Map();
+const _promptScopedStateCache = new Map();
+const _sessionScopedSpecStateCache = new Map();
+const _promptScopedTrackingStateCache = new Map();
+
+function _recentSessionIdFor(workspacePath) {
+  const key = workspacePath || '';
+  if (_recentSessionIdCache.has(key)) return _recentSessionIdCache.get(key);
+  const sessionId = findRecentSessionId(workspacePath);
+  _recentSessionIdCache.set(key, sessionId);
+  return sessionId;
+}
+
+/**
+ * Find the most recent session's prompt-scoped enforcement state. Used by
+ * enforcers that run before a tool call without the session id threaded in.
+ */
+function getRecentPromptScopedState(workspacePath) {
+  const sessionId = _recentSessionIdFor(workspacePath);
+  if (!sessionId) return null;
+  if (_promptScopedStateCache.has(sessionId)) return _promptScopedStateCache.get(sessionId);
+  const state = readPromptScopedState(sessionId, workspacePath);
+  _promptScopedStateCache.set(sessionId, state);
+  return state;
+}
+
+/**
+ * Session-wide variant of getRecentPromptScopedState for subagent contexts.
+ * See `readSessionScopedSpecState` for why this exists.
+ */
+function getRecentSessionScopedSpecState(workspacePath) {
+  const sessionId = _recentSessionIdFor(workspacePath);
+  if (!sessionId) return null;
+  if (_sessionScopedSpecStateCache.has(sessionId)) return _sessionScopedSpecStateCache.get(sessionId);
+  const state = readSessionScopedSpecState(sessionId, workspacePath);
+  _sessionScopedSpecStateCache.set(sessionId, state);
+  return state;
+}
+
+/**
+ * Find the most recent session tracking file and return its reconstructed
+ * observability state. Used by Stop hooks that need "current session"
+ * context without requiring the session_id to be threaded through.
+ */
+function getRecentTrackingState(workspacePath) {
+  const sessionId = _recentSessionIdFor(workspacePath);
+  if (!sessionId) return null;
+  if (_trackingStateCache.has(sessionId)) return _trackingStateCache.get(sessionId);
+  const state = readTrackingState(sessionId, workspacePath);
+  _trackingStateCache.set(sessionId, state);
+  return state;
+}
+
+/**
+ * Prompt-scoped variant of getRecentTrackingState. Returns null when no
+ * session file exists. When a file exists but no prompt_start has been
+ * written, returns empty collections. The caller treats that as "no
+ * activity in current prompt", which is a safe no-op for Stop-time checks.
+ */
+function getRecentPromptScopedTrackingState(workspacePath) {
+  const sessionId = _recentSessionIdFor(workspacePath);
+  if (!sessionId) return null;
+  if (_promptScopedTrackingStateCache.has(sessionId)) {
+    return _promptScopedTrackingStateCache.get(sessionId);
+  }
+  const state = readPromptScopedTrackingState(sessionId, workspacePath);
+  _promptScopedTrackingStateCache.set(sessionId, state);
+  return state;
+}
+
+// Escape hatch for tests that simulate multiple hook processes in one node
+// run. Production hook processes are short-lived and never need this.
+function _resetRecentStateCache() {
+  _recentSessionIdCache.clear();
+  _trackingStateCache.clear();
+  _promptScopedStateCache.clear();
+  _sessionScopedSpecStateCache.clear();
+  _promptScopedTrackingStateCache.clear();
+}
+
+function initSession(workspacePath) {
+  const sessionId = generateSessionId();
+  const trackingDir = getTrackingDir(workspacePath);
+  if (!fs.existsSync(trackingDir)) fs.mkdirSync(trackingDir, { recursive: true });
+
+  const activeSessionFile = path.join(trackingDir, '.active-session');
+  fs.writeFileSync(activeSessionFile, JSON.stringify({ sessionId, createdAt: Date.now() }));
+
+  appendTrackingEvent(sessionId, {
+    type: 'session_init',
+    workspace: workspacePath || process.cwd()
+  }, workspacePath);
 
   return sessionId;
 }
 
 /**
- * Clean up old session files (older than 7 days)
+ * Remove session tracking files older than 7 days. Legacy .json files are
+ * swept alongside new .jsonl files.
  */
-function cleanupOldSessions() {
-  if (!fs.existsSync(TRACKING_DIR)) return;
+function cleanupOldSessions(workspacePath) {
+  const trackingDir = getTrackingDir(workspacePath);
+  if (!fs.existsSync(trackingDir)) return;
 
-  const maxAge = 7 * 24 * 60 * 60 * 1000; // 7 days
+  const maxAge = 7 * 24 * 60 * 60 * 1000;
   const now = Date.now();
 
-  const files = fs.readdirSync(TRACKING_DIR);
-  for (const file of files) {
+  for (const file of fs.readdirSync(trackingDir)) {
     if (file === '.active-session') continue;
-
-    const filePath = path.join(TRACKING_DIR, file);
+    if (!file.endsWith('.json') && !file.endsWith('.jsonl')) continue;
+    const filePath = path.join(trackingDir, file);
     try {
       const stat = fs.statSync(filePath);
-      if (now - stat.mtime.getTime() > maxAge) {
-        fs.unlinkSync(filePath);
-      }
+      if (now - stat.mtime.getTime() > maxAge) fs.unlinkSync(filePath);
     } catch (e) {}
   }
 }
 
+function getErrorLogPath(workspacePath) {
+  return path.join(getProjectDir(workspacePath), 'hook-errors.log');
+}
+
+function logError(hook, message, workspacePath) {
+  const errorLogPath = getErrorLogPath(workspacePath);
+  const entry = `[${new Date().toISOString()}] ${hook}: ${message}\n`;
+  try {
+    const dir = path.dirname(errorLogPath);
+    if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
+    fs.appendFileSync(errorLogPath, entry);
+  } catch (e) {}
+}
+
+/**
+ * Strip content-bearing arguments and heredocs from a command string.
+ * Returns only the command portion for safe pattern matching.
+ *
+ * Recognized content-bearing flags (space or `=` delimiter):
+ *   --body / --comment / --message   (gh issue/pr create, many CLIs)
+ *   -m                                (git commit)
+ *   -f body= / -F body=               (gh api form fields for free text)
+ *   -f message= / -F message=         (gh api)
+ */
+function stripCommandContent(cmd) {
+  let stripped = cmd.replace(/<<-?\s*['"]?(\w+)['"]?[\s\S]*?\n\1(?:\s*\).*)?$/gm, '<<HEREDOC_STRIPPED');
+  const contentFlagMatch = stripped.match(
+    /(?:^|\s)--(body|comment|message)[\s=]|(?:^|\s)-m[\s"']|(?:^|\s)-[fF]\s+(body|message)=/
+  );
+  if (contentFlagMatch) stripped = stripped.substring(0, contentFlagMatch.index);
+  return stripped;
+}
+
 module.exports = {
-  findWorkspaceBrain,
+  getWorkspaceKey,
+  getProjectDir,
+  getTrackingDir,
   getSessionId,
-  loadSessionTracking,
-  saveSessionTracking,
+  getSessionTrackingPath,
+  appendTrackingEvent,
+  readTrackingEvents,
+  readTrackingState,
+  readPromptScopedState,
+  readSessionScopedSpecState,
+  readPromptScopedTrackingState,
+  getRecentTrackingState,
+  getRecentPromptScopedState,
+  getRecentSessionScopedSpecState,
+  getRecentPromptScopedTrackingState,
+  _resetRecentStateCache,
   initSession,
   cleanupOldSessions,
-  BRAIN_DIR,
-  TRACKING_DIR
+  getErrorLogPath,
+  logError,
+  stripCommandContent,
+  PROJECTS_DIR
 };

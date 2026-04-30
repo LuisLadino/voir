@@ -388,3 +388,35 @@ interface AIToolAdapter {
 - Some tools have richer injection than others
 - VOIR data must be transformable to each format
 - Claude Code has most control (hooks), others are file-based
+
+---
+
+### Decision 12: System Prompt Editor Must Lock Safety Instructions
+
+**Context:** VOIR's system prompt editor lets users customize Claude's system prompt inline. The question is what users should and should not be allowed to edit.
+
+**Decision:** The system prompt editor MUST lock all safety-related paragraphs to prevent users from removing or weakening Claude's safety instructions.
+
+**Rationale:**
+
+1. **Acceptable Use Policy** — Anthropic's AUP prohibits "intentionally bypass[ing] capabilities, restrictions, or guardrails established within our products for the purposes of instructing the model to produce harmful outputs (e.g., jailbreaking or prompt injection) without prior authorization from Anthropic." Letting users remove safety instructions would enable exactly this.
+
+2. **No single "Safety" section exists** — Claude's system prompt does not have a clearly labeled safety section. Safety rules are scattered as individual paragraphs throughout the prompt (security testing policy, OWASP/secure code rules, executing actions with care). VOIR must identify and lock ALL of them.
+
+3. **Safety evaluation features ARE allowed** — This constraint is about the system prompt editor only. VOIR can and should build features for LLM researchers to evaluate model outputs, including safety scoring, red teaming analysis, and behavioral observation. These are valid use cases (see secondary user persona: AI/LLM researchers).
+
+**What this means concretely:**
+
+| Allowed | NOT Allowed |
+|---------|-------------|
+| Safety evaluation/scoring features for researchers | Letting users remove safety paragraphs from system prompt |
+| Red teaming analysis tools | Providing a UI that weakens Claude's guardrails |
+| Model behavior observation across sessions | Marketing VOIR as a jailbreaking tool |
+| Effectiveness analysis including safety metrics | — |
+
+**Implementation note:** See `system-prompt-editor.md` section registry for known safety paragraph locations. These must be audited against each Claude Code version.
+
+**Consequences:**
+- System prompt editor needs a paragraph-level locking mechanism (not section-level)
+- Version compatibility database must track safety paragraph locations per version
+- Safety evaluation features are a valid product direction for the researcher persona

@@ -7,98 +7,79 @@ Automation scripts that integrate with Claude Code's hook system.
 ```
 hooks/
 ├── safety/              # Prevent dangerous actions
-│   └── block-dangerous.js   # Block rm -rf, force push, etc.
+│   ├── block-dangerous.cjs   # Block rm -rf, force push, etc.
+│   ├── enforce-skills.cjs    # Block git commit (must use /commit skill)
+│   └── enforce-plan.cjs      # Block gh issue create (must read plan skill)
 ├── tracking/            # Monitor what happens (observability)
-│   ├── tool-tracker.js      # Universal tracker for ALL tools
-│   ├── tool-failure.js      # Track failed tool calls
-│   ├── track-changes.js     # Log file modifications
-│   ├── command-log.js       # Log bash commands
-│   ├── detect-pivot.js      # Detect dependency changes
-│   ├── session-end.js       # Final session cleanup
-│   ├── subagent-tracker.js  # Track subagent spawn/finish
-│   └── awareness.js         # Detect when /reflect is needed
+│   ├── tool-tracker.cjs      # Universal tracker for ALL tools
+│   ├── tool-failure.cjs      # Track failed tool calls
+│   ├── track-changes.cjs     # Log file modifications
+│   ├── track-spec-reads.cjs  # Record which specs were read
+│   ├── command-log.cjs       # Log bash commands
+│   ├── detect-pivot.cjs      # Detect dependency changes
+│   ├── subagent-tracker.cjs  # Track subagent spawn/finish
+│   ├── awareness.cjs         # Detect when /analyze is needed (kit only)
+│   └── capture-corrections.cjs # Detect user corrections → prompt for feedback memory
 ├── quality/             # Enforce standards
-│   └── verify-before-stop.js    # Check for debug statements
-└── context/             # Smart context injection
-    ├── session-init.js      # Initialize session + check sync state
-    └── inject-context.js    # Auto-load relevant specs
+│   └── verify-before-stop.cjs    # Check for debug statements
+├── context/             # Smart context injection
+│   ├── session-init.cjs      # Initialize session + check sync state
+│   ├── inject-context.cjs    # Per-prompt orchestrator (phase reminder, reasoning, voice, capture, spec-triggers)
+│   ├── inject-utils.cjs      # Shared utilities for inject-context modules
+│   ├── reasoning-checkpoints.cjs  # LOOK IT UP, VERIFY, ROOT CAUSE reminders
+│   ├── voice-identity.cjs    # Voice reminder when writing content for Luis
+│   ├── capture.cjs           # "Remember this" → Claude memory system
+│   ├── spec-triggers.cjs     # Dynamic spec auto-loading from frontmatter triggers
+│   ├── enforce-specs.cjs     # DENY edits until required spec is read
+│   └── spawn-context-agent.cjs   # Spawn context agent at session start
+├── lifecycle/           # Project lifecycle management
+│   └── spawn-phase-evaluator.cjs  # Spawn phase evaluator after commits
+└── lib/                 # Shared utilities
+    └── session-utils.cjs     # Session ID, tracking, project path helpers
 ```
+
+## Persistence
+
+All tracking data lives in Claude Code's native per-project directory:
+
+```
+~/.claude/projects/{workspace-key}/
+├── memory/          # Persistent memories (auto-loaded via MEMORY.md)
+├── tracking/        # Session tracking files (our hooks write here)
+│   ├── {session-id}.json   # Per-session tracking data
+│   └── .active-session     # Current session marker
+├── overview.txt     # Daemon-generated synthesis of tracking data
+└── hook-errors.log  # Debug log for hook failures
+```
+
+The workspace key is deterministic from the git root path (e.g., `-Users-username-projects-my-project`).
 
 ## Observability
 
 The tracking system captures everything that happens for debugging and verification:
 
-| What | Hook | File |
+| What | Hook | Data |
 |------|------|------|
-| All tool calls | tool-tracker.js | `tools[]` |
-| Failed tools | tool-failure.js | `failures[]` |
-| File changes | track-changes.js | `filesModified[]`, `filesCreated[]` |
-| Bash commands | command-log.js | `commands[]` |
-| Context injections | inject-context.js | `injections[]` |
-| Subagents | subagent-tracker.js | `subagents[]` |
-| Session end | session-end.js | `summary{}` |
-| System health | awareness.js | prompts for /reflect |
+| All tool calls | tool-tracker.cjs | `tools[]` |
+| Failed tools | tool-failure.cjs | `failures[]` |
+| File changes | track-changes.cjs | `filesModified[]`, `filesCreated[]` |
+| Spec reads | track-spec-reads.cjs | `spec_read` event (via readPromptScopedState) |
+| Bash commands | command-log.cjs | `commands[]` |
+| Context injections | inject-context.cjs | `injections[]` |
+| Subagents | subagent-tracker.cjs | `subagents[]` |
+| System health | awareness.cjs | prompts for /analyze (kit only) |
+| User corrections | capture-corrections.cjs | prompts for feedback memory |
 
 **To verify the system is working:**
 ```bash
-cat ~/.gemini/antigravity/brain/{workspace-uuid}/sessions/{session-id}.json | jq
-```
-
-## Configuration
-
-Current `~/.claude/settings.json`:
-
-```json
-{
-  "hooks": {
-    "SessionStart": [
-      {"hooks": [{"type": "command", "command": "node ~/.gemini/antigravity/scripts/session-context.js"}]},
-      {"hooks": [{"type": "command", "command": "node .claude/hooks/context/session-init.js 2>/dev/null || true"}]}
-    ],
-    "SessionEnd": [
-      {"hooks": [{"type": "command", "command": "node .claude/hooks/tracking/session-end.js 2>/dev/null || true"}]}
-    ],
-    "PreToolUse": [
-      {"matcher": "Bash", "hooks": [{"type": "command", "command": "node .claude/hooks/safety/block-dangerous.js 2>/dev/null || true"}]}
-    ],
-    "PostToolUse": [
-      {"matcher": "", "hooks": [{"type": "command", "command": "node .claude/hooks/tracking/tool-tracker.js 2>/dev/null || true"}]},
-      {"matcher": "Edit|Write", "hooks": [{"type": "command", "command": "node .claude/hooks/tracking/track-changes.js 2>/dev/null || true"}]},
-      {"matcher": "Bash", "hooks": [
-        {"type": "command", "command": "node .claude/hooks/tracking/command-log.js 2>/dev/null || true"},
-        {"type": "command", "command": "node .claude/hooks/tracking/detect-pivot.js 2>/dev/null || true"}
-      ]}
-    ],
-    "PostToolUseFailure": [
-      {"matcher": "", "hooks": [{"type": "command", "command": "node .claude/hooks/tracking/tool-failure.js 2>/dev/null || true"}]}
-    ],
-    "UserPromptSubmit": [
-      {"hooks": [
-        {"type": "command", "command": "node .claude/hooks/context/inject-context.js 2>/dev/null || true"},
-        {"type": "command", "command": "node .claude/hooks/tracking/awareness.js 2>/dev/null || true"}
-      ]}
-    ],
-    "SubagentStart": [
-      {"hooks": [{"type": "command", "command": "node .claude/hooks/tracking/subagent-tracker.js 2>/dev/null || true"}]}
-    ],
-    "SubagentStop": [
-      {"hooks": [{"type": "command", "command": "node .claude/hooks/tracking/subagent-tracker.js 2>/dev/null || true"}]}
-    ],
-    "Stop": [
-      {"hooks": [{"type": "command", "command": "node .claude/hooks/quality/verify-before-stop.js 2>/dev/null || true"}]}
-    ],
-    "PreCompact": [
-      {"hooks": [{"type": "command", "command": "node ~/.gemini/antigravity/scripts/pre-compact.js"}]}
-    ]
-  }
-}
+cat ~/.claude/projects/{workspace-key}/tracking/{session-id}.json | jq
 ```
 
 ## Hook Descriptions
 
 ### Safety Hooks
 
-#### block-dangerous.js
+#### block-dangerous.cjs
 **Event:** PreToolUse (Bash)
 **Purpose:** Prevents execution of dangerous commands
 
@@ -110,115 +91,64 @@ Blocks:
 - Credential exposure (`cat .env`, echo secrets)
 - Fork bombs, filesystem formats
 
+#### enforce-skills.cjs
+**Event:** PreToolUse (Bash)
+**Purpose:** Blocks `git commit` — must use /commit skill
+
+Bypass: `SKILL_ACTIVE=1` prefix in command (set by commit skill).
+
+#### enforce-plan.cjs
+**Event:** PreToolUse (Bash)
+**Purpose:** Blocks `gh issue create` — must read plan skill first
+
 ### Tracking Hooks
 
-#### tool-tracker.js (NEW)
+#### tool-tracker.cjs
 **Event:** PostToolUse (all tools)
 **Purpose:** Universal tracker for ALL tool calls
 
-Captures:
-- Skill invocations (which slash commands were used)
-- MCP tool calls (context7, ag_browser_agent, etc.)
-- Read/Glob/Grep operations
-- Everything else
-
-```json
-{
-  "tools": [
-    {"timestamp": "...", "tool": "Skill", "skill": "/commit"},
-    {"timestamp": "...", "tool": "mcp__context7__query-docs", "server": "context7", "libraryId": "/vercel/next.js"},
-    {"timestamp": "...", "tool": "Read", "file": "src/app.ts"},
-    {"timestamp": "...", "tool": "Task", "subagent": "Explore", "description": "Find auth files"}
-  ]
-}
-```
-
-#### tool-failure.js (NEW)
+#### tool-failure.cjs
 **Event:** PostToolUseFailure (all tools)
 **Purpose:** Track failed tool calls
 
-PostToolUse only fires on success. This catches failures for debugging.
-
-```json
-{
-  "failures": [
-    {"timestamp": "...", "tool": "Read", "file": "/nonexistent.txt", "error": "File not found"},
-    {"timestamp": "...", "tool": "Bash", "command": "npm test", "error": "Exit code 1"}
-  ]
-}
-```
-
-#### track-changes.js
+#### track-changes.cjs
 **Event:** PostToolUse (Edit|Write)
 **Purpose:** Logs all file modifications during session
 
-Uses Claude Code's native `session_id` for file tracking. One session file per Claude Code session.
+#### track-spec-reads.cjs
+**Event:** PostToolUse (Read)
+**Purpose:** Records which specs were read (for enforce-specs enforcement cycle)
 
-#### command-log.js
+#### command-log.cjs
 **Event:** PostToolUse (Bash)
 **Purpose:** Logs all bash commands executed
 
-Note: PostToolUse only fires for successful commands. Failed commands go to tool-failure.js.
-
-```json
-{
-  "commands": [
-    {"timestamp": "...", "command": "npm test", "exitCode": 0, "success": true, "stdout": "All tests passed"}
-  ]
-}
-```
-
-#### detect-pivot.js
+#### detect-pivot.cjs
 **Event:** PostToolUse (Bash)
-**Purpose:** Detects dependency changes
+**Purpose:** Detects dependency changes (`npm install`, `yarn add`, etc.)
 
-Triggers on `npm install`, `yarn add`, `pnpm add`, `bun add`.
 Notifies: "Dependencies changed. Consider running /sync-stack."
 
-#### session-end.js (NEW)
-**Event:** SessionEnd
-**Purpose:** Final cleanup when session terminates
-
-Records:
-- Session duration
-- Summary of what happened (files modified, tools used, failures)
-
-#### subagent-tracker.js (NEW)
+#### subagent-tracker.cjs
 **Event:** SubagentStart, SubagentStop
 **Purpose:** Track when subagents spawn and finish
 
-Captures /audit parallel agents, Task tool subagents, background tasks.
-
-```json
-{
-  "subagents": [
-    {"id": "abc123", "type": "Explore", "description": "Find auth files", "startedAt": "...", "stoppedAt": "...", "durationSeconds": 5}
-  ]
-}
-```
-
-#### awareness.js (NEW)
+#### awareness.cjs
 **Event:** UserPromptSubmit
-**Purpose:** Detect conditions that warrant running /reflect
+**Purpose:** Detect conditions that warrant running /analyze from claude-kit
 
 Checks on every prompt (with 30min cooldown per warning type):
-- **Large files**: learnings.md >200 lines, patterns.md >150 lines
 - **Failures accumulating**: 5+ tool failures this session
-- **Long session**: 60+ minutes without checkpoint
-- **Overview bloat**: overview.txt >100 lines
 
-When triggered, outputs a gentle reminder:
-```
-[AWARENESS] System check:
-  - learnings.md is 215 lines (threshold: 200). May need consolidation.
-Consider running /reflect to analyze and improve.
-```
+#### capture-corrections.cjs
+**Event:** UserPromptSubmit
+**Purpose:** Detect when user is correcting Claude, prompt to save as feedback memory
 
-Works with `/reflect` command to close the decision-making loop.
+Detects patterns like "you didn't follow", "that's wrong", "stop guessing", "I already told you".
 
 ### Quality Hooks
 
-#### verify-before-stop.js
+#### verify-before-stop.cjs
 **Event:** Stop
 **Purpose:** Ensures quality before Claude stops working
 
@@ -231,119 +161,44 @@ If found, blocks stopping and asks Claude to clean up.
 
 ### Context Hooks
 
-#### session-init.js
+#### session-init.cjs
 **Event:** SessionStart
-**Purpose:** Initialize session and detect project changes
+**Purpose:** Initialize session tracking and detect project changes
 
-Does:
-1. Creates session tracking file in brain
-2. Compares file hashes to last /sync-stack run
-3. Notifies if configs changed (suggests /sync-stack)
-
-#### inject-context.js
+#### inject-context.cjs
 **Event:** UserPromptSubmit
-**Purpose:** Auto-routes to commands, injects context, loads voice profile
+**Purpose:** Per-prompt context injection orchestrator
 
-**Now tracks what it does** in `injections[]`:
-```json
-{
-  "injections": [
-    {"timestamp": "...", "promptSnippet": "commit these changes", "commandSuggested": "/commit"},
-    {"timestamp": "...", "promptSnippet": "write an article about...", "voiceProfileLoaded": true},
-    {"timestamp": "...", "promptSnippet": "how does X work", "reasoningCheckpoints": 1}
-  ]
-}
-```
+**Modules:**
+- `reasoning-checkpoints.cjs` — reminders to research, verify, diagnose (max 2 per prompt)
+- `voice-identity.cjs` — short voice reminder when writing content for Luis
+- `capture.cjs` — "remember this" / "capture that" → saves to Claude memory system
+- `spec-triggers.cjs` — dynamic spec auto-loading from frontmatter `triggers` field
+- **Phase reminder** — always fires, names design thinking phases and points to phase skills
 
-**Command Routing:**
-| You say... | Suggested Command |
-|------------|-------------------|
-| "build a python app", "let's create...", "help me fix..." | /start-task |
-| "explain how...", "help me understand", "what is..." | /learn |
-| "commit this", "done with these changes" | /commit |
-| "look this over", "check my work", "before I push" | /audit |
-| "does this look right?", "quick check" | /verify |
-| "this is gonna be big", "need to plan this out" | /add-feature |
-| "new project", "from scratch", "set this up" | /init-project |
-| "wire this up", "install the deps" | /sync-stack |
-| "save where we're at", "gonna take a break" | /checkpoint |
-| "analyze sessions", "what patterns", "clean up learnings" | /reflect |
+#### enforce-specs.cjs
+**Event:** PreToolUse (Edit|Write)
+**Purpose:** DENY edits until required spec is read. Scans spec frontmatter for `applies_to` patterns dynamically.
 
-**Reasoning Checkpoints:**
-| You say... | Reminder |
-|------------|----------|
-| "how does X work", "what's the best way" | LOOK IT UP: Check context7 or docs. |
-| "should I use X or Y" | COMPARE OPTIONS: Look up both. |
-| "I need to build a..." | EXISTING TOOLS FIRST: Check if a library does this. |
-| "I think it works..." | VERIFY: Don't assume. Read code to confirm. |
-| "not working", "getting an error" | ROOT CAUSE: Read the actual error. |
+#### spawn-context-agent.cjs
+**Event:** SessionStart
+**Purpose:** Injects instruction to spawn context-agent for background project evaluation
 
-**Voice Profile:**
-| You say... | What happens |
-|------------|--------------|
-| "write an article about...", "draft an email" | Loads voice-profile.md |
-| "portfolio content", "case study", "bio" | Loads voice-profile.md |
+### Lifecycle Hooks
 
-## Session Tracking File Structure
-
-Each session file in brain contains:
-
-```json
-{
-  "sessionId": "305e3325-275a-4a94-8a72-65a4d14a1d40",
-  "sessionStart": "2024-01-15T10:00:00Z",
-  "sessionEnd": "2024-01-15T11:30:00Z",
-  "durationMinutes": 90,
-  "workspace": "/Users/.../project",
-
-  "filesModified": ["src/app.ts"],
-  "filesCreated": ["src/new.ts"],
-  "operations": [{"timestamp": "...", "tool": "Edit", "file": "...", "type": "modify"}],
-
-  "commands": [{"timestamp": "...", "command": "npm test", "exitCode": 0, "success": true, "stdout": "..."}],
-
-  "tools": [{"timestamp": "...", "tool": "Skill", "skill": "/commit"}],
-
-  "failures": [{"timestamp": "...", "tool": "Read", "error": "File not found"}],
-
-  "injections": [{"timestamp": "...", "commandSuggested": "/commit"}],
-
-  "subagents": [{"id": "...", "type": "Explore", "durationSeconds": 5}],
-
-  "summary": {
-    "filesModified": 3,
-    "filesCreated": 1,
-    "commandsRun": 5,
-    "toolsUsed": 42,
-    "failures": 2,
-    "injections": 8
-  }
-}
-```
+#### spawn-phase-evaluator.cjs
+**Event:** UserPromptSubmit
+**Purpose:** Detects new commits and spawns phase-evaluator agent for project health evaluation
 
 ## Debugging
 
-**Hook errors logged to:** `~/.gemini/antigravity/brain/hook-errors.log`
+**Hook errors logged to:** `~/.claude/projects/{workspace-key}/hook-errors.log`
 
 **Check if hooks are firing:**
 ```bash
-# Watch session file for changes
-tail -f ~/.gemini/antigravity/brain/{uuid}/sessions/{session-id}.json
+# Watch tracking file for changes
+tail -f ~/.claude/projects/{workspace-key}/tracking/{session-id}.json
 
 # Check error log
-tail ~/.gemini/antigravity/brain/hook-errors.log
+tail ~/.claude/projects/{workspace-key}/hook-errors.log
 ```
-
-## How Hooks Work Together
-
-1. **Session starts** → session-init.js creates tracking file, session-context.js loads brain context
-2. **You type a prompt** → inject-context.js suggests commands, injects voice profile, logs what it did. awareness.js checks system health, prompts for /reflect if needed.
-3. **Claude uses any tool** → tool-tracker.js logs it (universal tracking)
-4. **Claude runs bash** → block-dangerous.js validates, command-log.js logs, detect-pivot.js checks deps
-5. **Claude edits files** → track-changes.js logs modifications
-6. **Tool fails** → tool-failure.js logs the error
-7. **Subagent spawns** → subagent-tracker.js logs start
-8. **Subagent finishes** → subagent-tracker.js logs stop with duration
-9. **Claude stops** → verify-before-stop.js checks for debug statements
-10. **Session ends** → session-end.js writes summary
-11. **Context compacts** → pre-compact.js writes persistent state

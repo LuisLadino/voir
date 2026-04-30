@@ -1,5 +1,5 @@
 ---
-description: Wire project together, verify setup, generate coding specs. Handles the HOW after /init-project defines the WHAT.
+description: Wire project together, verify setup, generate project specs. Handles the HOW after /init-project defines the WHAT.
 ---
 
 # /sync-stack
@@ -10,19 +10,16 @@ description: Wire project together, verify setup, generate coding specs. Handles
 - Installs dependencies and wires configs together
 - Verifies everything is connected properly
 - Generates coding specs from official docs
-- Creates a wiring diagram showing how pieces connect
-
----
+- Creates a system map showing how pieces connect
 
 ## Usage
 
 ```
-/sync-stack              # Full setup (install, wire, verify, generate specs)
-/sync-stack prisma       # Add a specific dependency and update wiring
-/sync-stack --verify     # Just verify wiring, don't regenerate specs
+/sync-stack                      # Full setup (install, wire, verify, generate specs)
+/sync-stack prisma               # Add a specific dependency and update specs
+/sync-stack --verify             # Just verify setup, don't regenerate specs
+/sync-stack --custom api-conventions   # Add custom project-specific spec
 ```
-
----
 
 ## Core Principle
 
@@ -32,8 +29,6 @@ description: Wire project together, verify setup, generate coding specs. Handles
 3. If not configured, prompt to set it up
 
 No category is "just project conventions" that skips verification.
-
----
 
 ## What This Does
 
@@ -53,18 +48,16 @@ Researches your stack via context7 and generates specs with **real patterns from
 | Category | What it contains | Source |
 |----------|------------------|--------|
 | `coding/` | Language and library patterns | Official docs (React, TS, etc.) |
-| `architecture/` | File structure, wiring diagram | Framework docs + detected config |
+| `architecture/` | File structure, system map | Framework docs + detected config |
 | `design/` | Implementation patterns for design system | Styling framework docs |
 | `documentation/` | Code comments, docstrings | Language conventions (TSDoc, etc.) |
 | `config/` | Git, testing, deployment, env | Detected from project files |
 
 ### 4. Wiring Diagram
-Generates `.claude/specs/architecture/wiring.md` with mermaid diagram showing:
+Generates `.claude/specs/architecture/system-map.yaml` showing:
 - Dependencies and their relationships
 - Config file connections
 - Build pipeline flow
-
----
 
 ## STEP 1: Read Existing Specs
 
@@ -82,8 +75,6 @@ find .claude/specs -name "*.md" -o -name "*.yaml" 2>/dev/null
 - Any custom specs (architecture/, design/, documentation/, custom/)
 
 **Note what exists** so you can update rather than overwrite, and preserve user customizations.
-
----
 
 ## STEP 2: Check Design System (UI Projects)
 
@@ -123,7 +114,44 @@ How do you want to proceed?
 
 If user chooses option 1, run /init-project's design section only, then continue.
 
----
+## STEP 2b: Check Design Direction (UI Projects)
+
+**After the design-system check, verify project design direction is captured.**
+
+`design-system.md` covers tokens and structural decisions, owned by `/init-project`. `direction.md` captures feel, brand voice, references, anti-references, and motion posture, owned by `/design shape`. Both are expected on UI projects. `/design polish` treats `direction.md` as hard rules during pre-ship review.
+
+Use the same UI detection as Step 2.
+
+```bash
+ls .claude/specs/design/direction.md 2>/dev/null
+```
+
+**If `direction.md` doesn't exist:**
+
+```
+DESIGN DIRECTION REQUIRED
+
+This project has a UI but no direction.md.
+
+design-system.md handles tokens and structural decisions via /init-project.
+direction.md handles feel, references, anti-references, and motion posture
+via /design shape. Both should exist for UI projects.
+
+Without direction.md, /design polish falls back to craft floor only and
+cannot enforce project-specific visual rules.
+
+Options:
+1. Run /design shape to establish direction now
+2. Create .claude/specs/design/direction.md manually. See
+   .claude/skills/design/references/project-spec-format.md
+3. Skip. Not recommended for production UI.
+
+How do you want to proceed?
+```
+
+**WAIT FOR USER RESPONSE** before continuing.
+
+If user chooses option 1, invoke `/design shape` and wait for completion, then continue.
 
 ## STEP 3: Project Setup (New Projects)
 
@@ -162,8 +190,6 @@ Install dependencies and wire configs? (yes/no)
 3. Verify lock file was created
 
 **If lock file exists:** Skip to Step 4.
-
----
 
 ## STEP 4: Detect Stack
 
@@ -215,56 +241,85 @@ Confirm? (yes / modify)
 
 **WAIT FOR USER RESPONSE**
 
----
-
 ## STEP 5: Research Each Technology
 
-For each confirmed technology, research official patterns.
+For each confirmed technology, research how it actually works — not just the API, but runtime behavior, integration patterns, and common problems.
 
-### REQUIRED: Use context7 MCP
+### Why research is critical
 
+Claude's training data goes stale. Technologies update constantly. What you "know" about Astro, Motion, or Tailwind may be outdated. The point of this step is to **learn the current state** before building anything.
+
+### Research approach: multiple sources
+
+Use ALL available sources. No single source has complete knowledge.
+
+**1. Context7** — Start here for API reference and official patterns.
 ```
-Use the context7 MCP tool to fetch documentation for [technology].
+Use context7 to fetch documentation for [technology].
 Look for: project structure, naming conventions, common patterns, anti-patterns.
 ```
+Context7 is good for: what functions exist, how to call them, official best practices.
+Context7 is weak on: runtime behavior, cross-technology interactions, version-specific gotchas.
 
-### If context7 fails
+**2. Web search** — Use for operational knowledge that docs don't cover.
+```
+Search for:
+- "[technology A] + [technology B] integration" (how technologies work together)
+- "[technology] common problems [current year]" (what breaks in practice)
+- "[technology] SSR hydration issues" (runtime behavior gotchas)
+- "[technology] migration guide [version]" (what changed between versions)
+- "[tech A] with [tech B] example" (real-world integration patterns)
+```
+Web search is good for: community-discovered gotchas, real integration examples, version-specific behavior, "I tried X and it broke because Y."
+Prioritize: official docs, GitHub issues/discussions, well-known dev blogs. Deprioritize: outdated tutorials, AI-generated content, posts without dates.
 
-**STOP and notify the user.** Do not silently fall back to web search.
+**3. WebFetch on official docs** — For specific pages that context7 doesn't index well.
+- Framework integration guides (e.g., Astro's React integration page)
+- Migration/upgrade guides (what changed between versions)
+- Advanced topics pages (SSR, hydration, performance)
+
+### If all sources fail for a technology
 
 ```
-CONTEXT7 UNAVAILABLE
+RESEARCH INCOMPLETE
 
-context7 returned an error for [technology]:
-[error message]
+Could not find sufficient information for [technology]:
+- context7: [result]
+- Web search: [result]
+- Official docs: [result]
 
 Options:
-1. Retry context7
+1. Retry with different search terms
 2. Skip this technology for now
-3. Use WebFetch on official docs (e.g., react.dev, docs.astro.build)
-
-Note: Web search is NOT acceptable for core framework patterns.
-Official documentation only.
+3. Generate spec with what we have (will be marked as incomplete)
 ```
 
 **WAIT FOR USER RESPONSE** before proceeding.
 
-### WebFetch (only with user approval)
+### What to research per technology
 
-If user approves, use WebFetch on official documentation sites only:
-- react.dev (not random blogs)
-- docs.astro.build (not tutorials)
-- tailwindcss.com/docs (not Medium articles)
+Don't just look up "how to use [technology]." Research these specific angles:
 
-Never use general WebSearch for framework patterns.
+- **Current version behavior:** What version is in package.json? What changed in recent versions?
+- **Runtime lifecycle:** What happens at build time vs server time vs client time?
+- **Integration with other stack technologies:** How does this technology interact with the other technologies in this project's stack?
+- **Known issues:** What are the common "why isn't this working" problems?
+- **Anti-patterns with explanations:** Not just "don't do X" but "don't do X because Y happens at runtime"
 
 ### Extract from research (categorized by spec type):
 
-**For coding specs:**
+**For coding specs — API patterns:**
 - Component/function patterns
 - Import style
 - Error handling patterns
 - Common gotchas to avoid
+
+**For coding specs — Runtime behavior:**
+- **Lifecycle:** What happens from initialization to interactive? (e.g., Astro: SSR renders HTML → CSS applies → scripts load → framework hydrates → components become interactive)
+- **SSR/SSG behavior:** If the technology involves server rendering, what HTML does the browser receive? What inline styles or attributes are added during server render? What changes after client JS executes?
+- **Execution order:** When do scripts run? What's synchronous vs asynchronous? What blocks rendering?
+- **Side effects:** What does the technology do that isn't obvious from the API? (e.g., Motion's `initial` prop renders as inline CSS during SSR, making content invisible before JS loads)
+- **Conditional behavior:** Under what conditions does the technology behave differently? (e.g., `client:visible` uses IntersectionObserver — element must be visible in the viewport, not just in the DOM)
 
 **For architecture specs:**
 - File/folder conventions
@@ -281,7 +336,77 @@ Never use general WebSearch for framework patterns.
 - Docstring formats
 - README patterns
 
----
+## STEP 5b: Cross-Technology Interaction Constraints
+
+**After researching each technology individually, analyze how they interact.**
+
+Individual technology docs describe how THEIR technology works. They don't describe what happens when their technology meets another. This step catches constraints that only emerge from combinations.
+
+### When to run this step
+
+Run this step when the stack has **2+ technologies that share a runtime concern**:
+- SSR framework + client-side library (Astro + React, Next.js + Motion)
+- CSS framework + JS framework (Tailwind + React, CSS Modules + Vue)
+- Build tool + framework (Vite + Svelte, Webpack + React)
+- ORM + API framework (Prisma + Express, Drizzle + tRPC)
+
+Skip this step for stacks where technologies don't interact at runtime (e.g., a Python CLI with just `click` and `requests`).
+
+### How to identify constraints
+
+For each **pair** of technologies in the stack, ask context7 or official docs:
+
+1. **Lifecycle conflicts:** Do both technologies assume control over the same lifecycle phase? (e.g., both try to manage component initialization, both modify the DOM on load)
+2. **SSR/hydration interactions:** If one technology server-renders and another expects client-side state, what happens during the gap? What does the user see between SSR output and full hydration?
+3. **CSS/visibility interactions:** Does one technology control visibility (CSS `display`, `opacity`) while another depends on visibility to activate? (e.g., IntersectionObserver-based hydration + CSS `display:none` containers)
+4. **Execution order dependencies:** Does technology A assume technology B has already run? What happens if B hasn't loaded yet?
+5. **Configuration conflicts:** Do both technologies need the same config option set to different values?
+
+### Research approach
+
+Use web search as the primary source here. Cross-technology interactions are rarely in official docs — they live in community knowledge.
+
+```
+For each technology pair, search for:
+- "[tech A] with [tech B] issues" (what breaks when combined)
+- "[tech A] [tech B] integration guide [current year]" (how to wire them correctly)
+- "[tech A] [tech B] gotchas" (community-discovered problems)
+- GitHub issues in both repos mentioning the other technology
+```
+
+Also check:
+- Official integration guides (e.g., Astro docs on React, Motion docs on SSR)
+- Context7 for any integration-specific documentation
+- Stack Overflow questions about the specific combination
+
+### Document as interaction constraints
+
+For each constraint found, document:
+
+```markdown
+### [Tech A] + [Tech B]: [Constraint Name]
+
+**What happens:** [Observable behavior when these interact]
+**Why:** [The mechanism — what each technology is doing that causes this]
+**Prevent by:** [What to do instead]
+
+Example:
+- Bad: [code that triggers the problem]
+- Good: [code that avoids it]
+```
+
+**Example constraints to look for:**
+
+| Stack Combination | Common Constraint |
+|---|---|
+| Astro + React | `client:visible` uses IntersectionObserver — won't hydrate components inside `display:none` containers (tabs, accordions, modals) |
+| Astro + Motion | Motion's `initial` prop renders as inline `style="opacity:0"` during SSR — content invisible until JS hydrates |
+| Next.js + Zustand | Server Components can't use client-side stores — state must be passed as props across the boundary |
+| Tailwind + dark mode | `darkMode: 'selector'` scopes to a CSS selector, `'class'` requires class on `<html>` — different integration patterns |
+| Prisma + serverless | Cold starts load the Prisma Client — connection pooling needed (PgBouncer, Prisma Accelerate) |
+| React + CSS transitions | React re-renders can interrupt CSS transitions mid-animation if state changes trigger unmount/remount |
+
+These constraints become the `## Interaction Constraints` section in the generated specs (Step 8b).
 
 ## STEP 6: Scan Existing Code
 
@@ -313,8 +438,6 @@ find . -name "*.test.*" -o -name "*.spec.*" | head -10
 - If existing patterns match best practices: document them as-is
 - If existing patterns differ: note the project's convention (consistency > best practice)
 - If no existing code: use researched best practices
-
----
 
 ## STEP 7: Update Config Specs
 
@@ -414,11 +537,9 @@ Update the template with:
 - Required environment variables
 - Variable naming conventions
 
----
-
 ## STEP 8: Generate All Specs
 
-**Use the research from Step 3 to fill in actual content.** Don't create empty templates. Every spec should contain real patterns from official docs.
+**Use the research from Steps 5 and 5b to fill in actual content.** Don't create empty templates. Every spec should contain real patterns from official docs, including runtime behavior and interaction constraints.
 
 ### 8a: Ask which categories to generate
 
@@ -463,6 +584,26 @@ export function Button({ label, onClick }: ButtonProps) {
 ### Hooks
 - Call hooks at the top level, not inside conditions
 - Custom hooks must start with "use"
+
+## Runtime Behavior
+
+### Lifecycle
+[What happens from initialization to interactive — the execution sequence, not just the API]
+
+### SSR Behavior (if applicable)
+[What does the server render? What HTML does the browser receive? What changes after JS executes?]
+
+### Side Effects
+[What does this technology do that isn't obvious from the API? Inline styles added during SSR, DOM mutations, global state changes, etc.]
+
+## Interaction Constraints
+
+[Constraints that emerge from combining this technology with others in the stack. From Step 5b research.]
+
+### [This Tech] + [Other Tech]: [Constraint Name]
+**What happens:** [Observable behavior]
+**Why:** [Mechanism]
+**Prevent by:** [What to do instead]
 
 ## Anti-Patterns
 
@@ -609,97 +750,414 @@ export async function getUser(userId: string): Promise<User | null> {
 - Skip `documentation/` if no specific conventions found in docs
 - **Never create empty templates** - only create specs with real content from research
 
+## STEP 9: Generate Component-Scoped Specs
+
+**Detect distinct modules in the project and generate component-level specs for each one.**
+
+Technology specs (Step 8) tell Claude HOW to write code in a language or framework. Component specs tell Claude HOW THIS MODULE works — its architecture, patterns, decisions, and integration points.
+
+### 9a: Detect component boundaries
+
+Scan for top-level directories that represent distinct modules:
+
+```bash
+# Check for common component directory patterns
+ls -d */ 2>/dev/null | head -20
+
+# Look for distinct source modules
+ls -d src/*/ 2>/dev/null | head -20
+
+# Check for monorepo packages
+ls -d packages/*/ apps/*/ 2>/dev/null | head -20
+```
+
+**Component indicators** — a directory is a component if it has:
+- Its own entry point (index.ts, main.ts, app.ts, server.ts)
+- A distinct concern (api/, frontend/, workers/, lib/, shared/)
+- Its own config files (package.json in monorepos)
+- Enough files to represent a module (not just 1-2 utility files)
+
+**Common patterns to detect:**
+
+| Pattern | What to look for |
+|---------|-----------------|
+| **Backend/Frontend split** | `backend/`, `frontend/`, `client/`, `server/` |
+| **API layer** | `api/`, `src/api/`, `routes/`, `src/routes/` |
+| **Worker/job services** | `workers/`, `jobs/`, `queues/`, `cron/` |
+| **Shared libraries** | `lib/`, `shared/`, `common/`, `packages/shared/` |
+| **Monorepo packages** | `packages/*/`, `apps/*/` |
+| **Database layer** | `db/`, `prisma/`, `drizzle/`, `migrations/` |
+| **Infrastructure** | `infra/`, `deploy/`, `terraform/` |
+
+**If no distinct components found** (flat project structure like a simple Next.js app): skip this step. The technology specs from Step 8 are sufficient.
+
+**If components found, show the user:**
+
+```
+COMPONENT BOUNDARIES DETECTED
+
+Your project has distinct modules that benefit from component-scoped specs:
+
+1. backend/     — API server (Express, 47 files)
+2. frontend/    — React SPA (92 files)
+3. workers/     — Background jobs (12 files)
+4. shared/      — Shared types and utilities (8 files)
+
+Generate component specs? (yes / customize / skip)
+```
+
+**WAIT FOR USER RESPONSE**
+
+### 9b: Analyze each component
+
+For each confirmed component, scan to understand its internals:
+
+```bash
+# Entry points
+find {component}/ -maxdepth 2 -name "index.*" -o -name "main.*" -o -name "app.*" -o -name "server.*" | head -5
+
+# Key patterns — what frameworks/libraries does this component use?
+grep -r "^import" {component}/ --include="*.ts" --include="*.tsx" | \
+  grep -oP 'from ["\x27]([^"\x27]+)' | sort | uniq -c | sort -rn | head -15
+
+# Architecture patterns — how is it structured?
+find {component}/ -type d | head -15
+
+# Integration points — what does it import from other components?
+grep -r "from ['\"].*\.\./\.\." {component}/ --include="*.ts" | head -10
+```
+
+Also check:
+- Does it have its own config files? (tsconfig, package.json, etc.)
+- Does it have its own test structure?
+- What ORM/DB patterns does it use?
+- What state management approach? (frontend)
+- What routing pattern? (API)
+
+### 9c: Generate component specs
+
+For each component, create `.claude/specs/components/{name}.md`:
+
+```markdown
+---
+name: {component-name}
+description: >
+  Architecture and patterns for the {name} module.
+  Required reading before editing files in {path}.
+applies_to:
+  - "{path}/**/*.ts"
+  - "{path}/**/*.tsx"
+category: components
 ---
 
-## STEP 9: Generate Wiring Diagram
+# {Component Name}
 
-Generate `.claude/specs/architecture/wiring.md` with a mermaid diagram showing how the project is wired together.
+## Purpose
+
+{What this component does in the system. One paragraph.}
+
+## Architecture
+
+### Directory Structure
+
+{scanned directory layout}
+
+### Key Entry Points
+- `{path}/index.ts` — {what it exports}
+- `{path}/server.ts` — {what it starts}
+
+### Core Patterns
+
+{Patterns discovered from scanning the code. Examples:}
+
+**Data Access:**
+- Uses repository pattern via `{path}/repositories/`
+- All DB queries go through repositories, never direct ORM calls in routes
+
+**Routing:**
+- Express router in `{path}/routes/`
+- Route handlers delegate to services in `{path}/services/`
+
+**State Management:** (frontend)
+- Zustand stores in `{path}/stores/`
+- Server state via React Query in `{path}/hooks/`
+
+### Integration Points
+
+- Imports from `shared/` for types and utilities
+- Exposes API consumed by `frontend/` via REST endpoints
+- Publishes events consumed by `workers/`
+
+## Anti-Patterns
+
+- Don't put business logic in route handlers — use services
+- Don't import directly from other components' internals — use their public API
+- Don't duplicate types that exist in `shared/`
+
+## Architecture Decisions
+
+{Any decisions discoverable from the code structure. If not obvious, leave this section for the user to fill in.}
+```
+
+### 9d: Add to stack-config.yaml
+
+For each generated component spec, add an entry:
+
+```yaml
+specs:
+  components:
+    - name: backend
+      file: components/backend.md
+      applies_to:
+        - "backend/**/*.ts"
+      description: "Backend API architecture and patterns"
+
+    - name: frontend
+      file: components/frontend.md
+      applies_to:
+        - "frontend/**/*.tsx"
+        - "frontend/**/*.ts"
+      description: "Frontend SPA architecture and patterns"
+```
+
+### 9e: Verify enforcement
+
+After generating, verify enforce-specs will pick them up:
+
+```bash
+# Test: does a backend file trigger the backend spec?
+echo '{"tool_name":"Edit","tool_input":{"file_path":"backend/src/routes/users.ts"}}' | \
+  node .claude/hooks/context/enforce-specs.cjs
+```
+
+If enforcement works, Claude will be required to read `components/backend.md` before editing any file in `backend/`.
+
+## STEP 10: Generate System Map
+
+Generate `.claude/specs/architecture/system-map.yaml` — a structured YAML document that maps how the project's components connect.
+
+### Purpose
+
+The system map is a dependency graph and change impact guide. It tells Claude: "if you change file X, what else is affected?" It gets:
+- **Enforced** by enforce-specs (must read before editing project files)
+- **Freshness-checked** by context agent at session start
+- **Update-flagged** by phase evaluator after commits that change architecture
 
 ### What to include
 
-1. **Dependencies** - Key packages and their relationships
-2. **Config connections** - What config files reference each other
-3. **Build pipeline** - How source becomes output
-4. **Data flow** - How data moves through the app (if applicable)
+Scan the project to identify:
+1. **Components** — key files/modules with their imports, reads, writes
+2. **Data flow** — how data moves through the system (routes, state, APIs)
+3. **Config connections** — what config files reference each other
+4. **Change impact rules** — "if you change X, also update Y"
 
-### Generate the diagram
+### How to scan
 
-```markdown
-# Project Wiring
+```bash
+# Detect project structure
+find src -type f -name "*.ts" -o -name "*.tsx" -o -name "*.js" -o -name "*.jsx" | head -30
 
-## Overview Diagram
+# Find imports and dependencies
+grep -r "^import\|require(" src --include="*.ts" --include="*.tsx" | head -20
 
-```mermaid
-graph TB
-    subgraph "Source"
-        src[src/]
-        components[components/]
-        pages[pages/]
-    end
+# Find config cross-references
+grep -r "tsconfig\|tailwind\|postcss\|vite" *.config.* *.json 2>/dev/null
 
-    subgraph "Config"
-        pkg[package.json]
-        ts[tsconfig.json]
-        vite[vite.config.ts]
-        tw[tailwind.config.ts]
-    end
-
-    subgraph "Build"
-        bundler[Vite]
-        tsc[TypeScript]
-        postcss[PostCSS]
-    end
-
-    subgraph "Output"
-        dist[dist/]
-    end
-
-    pkg --> bundler
-    ts --> tsc
-    tw --> postcss
-    src --> tsc
-    tsc --> bundler
-    postcss --> bundler
-    bundler --> dist
-
-    ts -.-> |paths| src
-    tw -.-> |content| components
-    tw -.-> |content| pages
-    vite -.-> |plugins| ts
-    vite -.-> |plugins| postcss
+# Find API routes / data sources
+find . -path "*/api/*" -name "*.ts" -o -path "*/routes/*" -name "*.ts" | head -10
 ```
 
-## Config Dependencies
+### Generate the YAML
 
-| Config File | Depends On | Referenced By |
-|-------------|------------|---------------|
-| tsconfig.json | - | vite.config.ts |
-| tailwind.config.ts | - | postcss.config.js |
-| vite.config.ts | tsconfig.json, tailwind | package.json scripts |
+```yaml
+# System Map — [project name]
+# Dependency graph and change impact guide.
+# Read this before editing project files.
+#
+# Generated by /sync-stack
+# Last verified: [date]
 
-## Key Connections
+components:
+  # For each key file/module:
+  src/components/Button.tsx:
+    purpose: Primary button component
+    imports: [src/lib/utils.ts, src/styles/tokens.ts]
+    used_by: [src/pages/Home.tsx, src/pages/Settings.tsx]
+    if_changed:
+      - Check all pages that import this component
+      - Update design system spec if API changes
 
-- **TypeScript paths** → Must match actual directory structure
-- **Tailwind content** → Must include all files with classes
-- **Vite plugins** → Must be installed and configured in order
+  src/lib/api.ts:
+    purpose: API client
+    imports: [src/lib/config.ts]
+    used_by: [src/hooks/useData.ts, src/pages/Dashboard.tsx]
+    if_changed:
+      - Update API types if response shape changes
+      - Check all hooks that call these functions
+
+data_flow:
+  # How data moves through the app
+  - "User action → src/hooks/useData.ts → src/lib/api.ts → external API"
+  - "API response → state store → component re-render"
+
+config_connections:
+  tsconfig.json:
+    referenced_by: [vite.config.ts]
+    paths_must_match: src/ directory structure
+  tailwind.config.ts:
+    content_must_include: ["src/**/*.tsx"]
+    referenced_by: [postcss.config.js]
+
+change_rules:
+  - trigger: "Adding a new page/route"
+    do:
+      - Add to navigation component
+      - Update sitemap if it exists
+      - Add route test
+
+  - trigger: "Changing API response shape"
+    do:
+      - Update TypeScript types
+      - Update all consumers of that endpoint
+      - Update tests
 ```
 
-### Adapt to actual stack
+### Adapt to project type
 
-The above is an example. Generate a diagram that reflects THIS project's actual:
-- Framework (Next.js, Astro, Vite, etc.)
-- Language (TypeScript, JavaScript, etc.)
-- Styling (Tailwind, CSS Modules, etc.)
-- Build tools
-- Config files present
+The example above is for a web app. Adapt the structure to match the actual project:
 
----
+| Project Type | Key Components | Key Connections |
+|-------------|----------------|-----------------|
+| Web app | Pages, components, API routes, state | Route → component → API → data |
+| CLI tool | Commands, modules, config | Command → handler → output |
+| Library | Public API, internal modules | Export → consumer → types |
+| API server | Routes, middleware, models | Request → middleware → handler → DB |
+| Static site | Pages, layouts, content | Content → template → output |
 
-## STEP 10: Verify Wiring
+### Add to stack-config.yaml
+
+Add the system map spec with applies_to patterns covering the project's source files:
+
+```yaml
+architecture:
+  - name: system-map
+    file: architecture/system-map.yaml
+    applies_to:
+      - "src/**/*.ts"
+      - "src/**/*.tsx"
+    description: "How project components connect — dependency graph and change impact guide"
+```
+
+## STEP 11: Generate CI Workflow
+
+**Generate GitHub Actions CI workflow based on detected stack.**
+
+### Check if CI exists
+
+```bash
+ls .github/workflows/ci.yml 2>/dev/null
+```
+
+If exists, ask: "CI workflow exists. Regenerate based on current stack? (yes/skip)"
+
+### Generate based on stack
+
+Create `.github/workflows/ci.yml` with checks appropriate for the detected stack:
+
+**Node.js projects (React, Next.js, Astro, Docusaurus, etc.):**
+
+```yaml
+name: CI
+
+on:
+  pull_request:
+    branches: [main]
+
+jobs:
+  checks:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: '[npm/yarn/pnpm]'
+      - run: [npm ci / yarn / pnpm install]
+      - run: npm run build
+      - run: npm run lint --if-present
+      - run: npm test --if-present
+```
+
+**Python projects:**
+
+```yaml
+name: CI
+
+on:
+  pull_request:
+    branches: [main]
+
+jobs:
+  checks:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: pip install -r requirements.txt
+      - run: ruff check . --if-present
+      - run: pytest --if-present
+```
+
+**Config/docs projects (no build):**
+
+```yaml
+name: CI
+
+on:
+  pull_request:
+    branches: [main]
+
+jobs:
+  checks:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Validate YAML
+        run: |
+          python3 -c "import yaml; [yaml.safe_load(open(f)) for f in __import__('glob').glob('**/*.yaml', recursive=True)]"
+      - name: Validate JSON
+        run: |
+          python3 -c "import json; [json.load(open(f)) for f in __import__('glob').glob('**/*.json', recursive=True)]"
+```
+
+### Adapt to detected stack
+
+Use the stack detected in Step 4 to:
+1. Choose the right base template
+2. Set correct package manager (npm/yarn/pnpm/bun)
+3. Include test command if testing framework detected
+4. Include lint command if linter detected
+5. Include build command if framework has one
+
+### Enable auto-merge support
+
+Add to the workflow:
+
+```yaml
+permissions:
+  contents: write
+  pull-requests: write
+```
+
+This allows the commit skill's `gh pr merge --auto` to work.
+
+## STEP 12: Verify Wiring
 
 **Check that all configs are actually connected properly.**
 
-### 10a: TypeScript paths
+### 12a: TypeScript paths
 
 ```bash
 # Check tsconfig paths exist
@@ -707,7 +1165,7 @@ cat tsconfig.json | jq '.compilerOptions.paths'
 # Verify those paths resolve to actual directories
 ```
 
-### 10b: Tailwind content
+### 12b: Tailwind content
 
 ```bash
 # Check tailwind content array
@@ -715,14 +1173,14 @@ cat tailwind.config.* | grep -A5 "content"
 # Verify patterns match actual file locations
 ```
 
-### 10c: Build script
+### 12c: Build script
 
 ```bash
 # Try a build
 npm run build 2>&1 | head -20
 ```
 
-### 10d: Peer dependencies
+### 12d: Peer dependencies
 
 ```bash
 # Check for peer dep warnings
@@ -748,14 +1206,14 @@ Fix these issues? (yes/no)
 
 **WAIT FOR USER RESPONSE** before making fixes.
 
----
+## STEP 13: Create or Update stack-config.yaml
 
-## STEP 11: Update stack-config.yaml
-
-Update `.claude/specs/stack-config.yaml` with:
+Create `.claude/specs/stack-config.yaml` if it doesn't exist, or update the existing one with:
 
 1. **Stack details** - framework, language, styling, testing, package_manager
-2. **Specs list** - all generated spec files across all categories
+2. **Specs list** - each spec needs: name, file, applies_to patterns, description
+
+The `applies_to` patterns tell enforce-specs.cjs which files require reading this spec before editing.
 
 Example update:
 
@@ -770,28 +1228,63 @@ stack:
 
 specs:
   coding:
-    - nextjs-specs
-    - typescript-specs
-    - tailwind-specs
-    - vitest-specs
+    - name: nextjs-specs
+      file: coding/nextjs-specs.md
+      applies_to:
+        - "app/**/*.tsx"
+        - "pages/**/*.tsx"
+      description: "Next.js patterns and conventions"
+
+    - name: typescript-specs
+      file: coding/typescript-specs.md
+      applies_to:
+        - "**/*.ts"
+        - "**/*.tsx"
+      description: "TypeScript patterns"
+
+    - name: tailwind-specs
+      file: coding/tailwind-specs.md
+      applies_to:
+        - "**/*.tsx"
+        - "**/*.jsx"
+        - "tailwind.config.*"
+      description: "Tailwind CSS patterns"
+
+    - name: vitest-specs
+      file: coding/vitest-specs.md
+      applies_to:
+        - "**/*.test.ts"
+        - "**/*.spec.ts"
+      description: "Testing patterns"
+
   architecture:
-    - project-structure
+    - name: project-structure
+      file: architecture/project-structure.md
+      applies_to: []
+      description: "File structure conventions"
+
   design:
-    - design-system
-  documentation:
-    - code-comments
+    - name: design-system
+      file: design/design-system.md
+      applies_to: []
+      description: "Design tokens and styles"
+
   config:
-    - version-control
-    - deployment
-    - environment
-    - testing
+    - name: version-control
+      file: config/version-control.md
+      applies_to: []
+      description: "Git conventions"
 ```
+
+**applies_to patterns:**
+- Use glob patterns that match files this spec governs
+- `**/*.tsx` matches all .tsx files
+- `app/**/*.tsx` matches .tsx files under app/
+- Empty array `[]` means spec is loaded but not enforced on specific files
 
 Only include categories that have specs. Don't add empty categories.
 
----
-
-## STEP 12: Summary
+## STEP 14: Summary
 
 Show what was created/updated:
 
@@ -822,15 +1315,19 @@ Specs generated:
 - coding/tailwind-specs.md
 - coding/vitest-specs.md
 - architecture/project-structure.md
-- architecture/wiring.md (with mermaid diagram)
+- architecture/system-map.yaml (dependency graph + change impact)
 - design/tailwind-implementation.md
+
+CI/CD:
+- .github/workflows/ci.yml (build, lint, test)
+- Auto-merge enabled via commit skill
 
 Updated: stack-config.yaml
 
 Next steps:
-- Review wiring diagram in architecture/wiring.md
+- Review CI workflow in .github/workflows/ci.yml
 - Review specs in .claude/specs/
-- Run /start-task to build with these specs enforced
+- Run /build to implement with these specs enforced
 ```
 
 ### Save state for pivot detection
@@ -852,8 +1349,6 @@ After successful sync, save a hash of key files for detecting future changes:
 
 This allows future `/sync-stack` runs to detect what changed and prompt for updates.
 
----
-
 ## Error Handling
 
 ### context7 fails (network error, timeout)
@@ -871,8 +1366,6 @@ Note the inconsistency. Ask user which pattern to standardize on.
 ### Spec already exists
 Ask: "Update existing [tech]-specs.md? (yes/skip)"
 
----
-
 ## Adding a Single Dependency
 
 When run as `/sync-stack [dependency]`:
@@ -886,18 +1379,102 @@ When run as `/sync-stack [dependency]`:
 
 **Note:** Single dependency mode focuses on coding specs. Run full `/sync-stack` to regenerate architecture/design/documentation specs.
 
----
+## Adding Custom Project Specs
+
+When run as `/sync-stack --custom [name]`:
+
+Use this for internal project rules NOT covered by library documentation:
+- Internal API conventions
+- Company naming standards
+- Security requirements
+- Accessibility standards
+- Business logic rules
+- Any project-specific patterns
+
+**Don't use for:** Library patterns (React, Prisma, Tailwind). Use regular `/sync-stack` for those.
+
+### Step 1: Spec Type
+
+Ask the user which type:
+
+1. **coding** - Internal coding standards (`.claude/specs/coding/`)
+2. **architecture** - System design rules (`.claude/specs/architecture/`)
+3. **design** - Design rules (`.claude/specs/design/`)
+4. **config** - Operational rules (`.claude/specs/config/`)
+
+### Step 2: Confirm
+
+Show: type, name, file path. Ask for confirmation.
+
+### Step 3: Create File
+
+Create the spec file with template:
+
+```markdown
+# [Spec Name]
+
+## Overview
+
+[What this spec covers]
+
+## Patterns
+
+### [Pattern Name]
+[Description with code example]
+
+## Anti-Patterns
+
+- [What NOT to do] - [Why]
+```
+
+### Step 4: Update stack-config.yaml
+
+Add the spec to the appropriate category with its applies_to patterns:
+
+```yaml
+specs:
+  coding:
+    - name: api-conventions
+      file: coding/api-conventions.md
+      applies_to:
+        - "src/api/**/*.ts"
+        - "src/routes/**/*.ts"
+      description: "Internal API conventions"
+```
+
+Ask the user what file patterns this spec should govern. These patterns determine when Claude must read this spec before editing.
+
+### Step 5: Generate Content (Optional)
+
+Ask if they want help filling in the spec:
+
+1. **Research** - Research general best practices to scaffold
+2. **Manual** - Keep template for manual editing
+
+Research sources for custom specs:
+- REST/GraphQL API design guidelines
+- OWASP security best practices
+- WCAG accessibility standards
+- Language-agnostic patterns
+
+### Step 6: Done
+
+Confirm the spec was created. Suggest reviewing and customizing.
 
 ## How Specs Are Used
 
 After running `/sync-stack`:
 
-1. User runs `/start-task`
-2. Claude loads `stack-config.yaml`
-3. Reads all files listed under `specs:`
-4. Shows patterns that will be enforced
-5. User approves
-6. Claude implements following specs
-7. Runs quality gates
+**For /build:**
+1. Claude loads `stack-config.yaml`
+2. Reads all spec files listed under `specs:`
+3. Specs are now in context for the work
 
-**Your specs become the rules.**
+**For enforcement (automatic):**
+1. Claude attempts to edit a file
+2. `enforce-specs.cjs` reads `stack-config.yaml`
+3. Checks if file matches any spec's `applies_to` patterns
+4. If match found, blocks edit until that spec is read
+5. After reading spec, edits are allowed for that prompt
+
+**Your specs become the rules.** The `applies_to` patterns determine which files require which specs.

@@ -15,7 +15,8 @@ VOIR is **not just memory/context** - it's a complete observability solution:
 | Capability | User Value |
 |------------|------------|
 | **Four Pillars** | AI that knows you and your project |
-| **Session Capture** | See what the LLM actually did |
+| **Input Transparency** | See what the AI receives (context, prompts, memory) |
+| **Session Capture** | See what the LLM actually did (tool calls, changes) |
 | **Visualization** | Understand behavior through UI |
 | **Effectiveness Analysis** | Know if AI is helping |
 | **Compliance/Governance** | AI follows your rules and standards |
@@ -67,6 +68,64 @@ This data persists across sessions and accumulates over time, making AI interact
 
 **Research basis:** LangMem's namespace isolation (user/session/agent scopes), ContextForge's markdown-based approach, and patterns from claude-dev-framework for personal context engineering.
 
+## Input Transparency
+
+**Core insight:** To debug AI behavior, you need to see what the AI *received*, not just what it *did*.
+
+When something goes wrong, the question is: "What did the AI actually see?" Raw dumps are overwhelming (50k+ tokens), but a structured, expandable view makes it actionable.
+
+### The Input Trace View
+
+For each message sent, show the complete input pipeline as an expandable hierarchy:
+
+```
+Message: "create the file..."
+├── Hooks Triggered
+│   ├── SessionStart (2 hooks) ▶
+│   │   ├── session-context.js → identity, learnings, handoff
+│   │   └── session-init.cjs → workspace state
+│   └── UserPromptSubmit (3 hooks) ▶
+│       ├── inject-context.cjs → CLAUDE.md files
+│       ├── awareness.cjs → system health check
+│       └── clear-pending.cjs → cleanup
+├── Context Loaded
+│   ├── System Prompt (42k tokens) ▶
+│   │   ├── Tool definitions (18 tools)
+│   │   ├── Behavioral rules
+│   │   └── Appended rules (~/.claude/system-rules.md)
+│   ├── Project Instructions (8k tokens) ▶
+│   │   ├── CLAUDE.md (root)
+│   │   └── .claude/CLAUDE.md
+│   └── Session Context (3k tokens) ▶
+│       ├── Identity & preferences
+│       ├── Previous session handoff
+│       └── Learnings & corrections
+├── Warnings/Reminders Injected
+│   └── <system-reminder> tags (expand to see) ▶
+└── Final Input to Model
+    ├── Total: 53k tokens
+    └── Remaining context: 147k tokens
+```
+
+### Why This Matters
+
+**Debugging workflow:** When hooks fail or AI behaves unexpectedly:
+1. See which hooks triggered (and which didn't)
+2. See what context was injected
+3. See warnings/reminders the AI received
+4. Identify the gap between expected and actual input
+
+**Example:** A hook using relative paths fails silently. Without input transparency, you only see wrong AI behavior. With it, you see the hook didn't fire, diagnose the path issue, and fix it.
+
+### Not Raw Dumps
+
+The key is **progressive disclosure**:
+- Top level: Structure and token counts
+- Expand: Section summaries
+- Drill down: Actual content when needed
+
+This is like browser DevTools Network tab - you don't see all bytes, you see headers/body collapsed, expandable on demand.
+
 ## Users
 
 **Primary:** Developers using AI coding assistants (Claude Code, Copilot, Cursor, Continue.dev)
@@ -101,12 +160,14 @@ User needs:
 - **Persist** learnings across sessions and workspaces
 
 ### Observability Capabilities
-- **Visualize** sessions, tool calls, file changes
+- **Input transparency** - See what the AI received (hooks, context, prompts)
+- **Output capture** - See what the AI did (tool calls, file changes)
 - **Analyze** effectiveness - what's working, what's not
 - **Detect** patterns - successful approaches, failure modes
 - **Track** trends - improvement over time
 
 ### Key Differentiators
+- **Input transparency** - See what the AI receives, not just what it does
 - **LLM-agnostic** - Works with any AI coding tool
 - **Local-first** - All data stays on user's machine
 - **Transparent** - Plain files (JSON, Markdown) users can read/edit

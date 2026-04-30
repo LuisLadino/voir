@@ -11,13 +11,9 @@ Teach me anything. Code, science, history, philosophy, how engines work, why the
 /learn [topic or question] # Explain anything
 ```
 
----
-
 ## This is NOT code-specific
 
 This command explains ANY topic the user asks about. Do not refuse because something "isn't code related." If the user asks about quantum physics, medieval history, or how bread rises, explain it.
-
----
 
 ## How to Respond
 
@@ -34,8 +30,6 @@ Explain it like I'm 5 (but not patronizing):
 
 Skip sections that don't apply. A question about history doesn't need "why it matters" if that's obvious.
 
----
-
 ## Principles
 
 - **No jargon** - Define technical terms when first used
@@ -43,8 +37,6 @@ Skip sections that don't apply. A question about history doesn't need "why it ma
 - **Be concrete** - Examples over abstractions
 - **Adjust depth** - Simple first, add detail if asked
 - **Be honest** - Say when something is genuinely complex
-
----
 
 ## Examples
 
@@ -62,8 +54,6 @@ Skip sections that don't apply. A question about history doesn't need "why it ma
 
 **User:** `/learn react hooks`
 → Explain what hooks are, why they exist, how to use them
-
----
 
 ## Tone
 

@@ -1,14 +1,13 @@
 ---
-description: Define product requirements before coding. Creates project-brief, architecture decisions, design system. For complex projects needing upfront planning.
+description: Define product requirements before execution. Creates project-brief, architecture decisions, design system. For complex projects needing upfront planning.
 ---
 
 # /init-project
 
 **Define WHAT you're building before you build it.**
 
-This command establishes the product vision, architecture decisions, and design system. Run `/sync-stack` after to handle the technical wiring (HOW).
+This command establishes the product vision, architecture decisions, and design system. Run `/sync-stack` after to handle the technical setup (HOW).
 
----
 
 ## What This Creates
 
@@ -24,7 +23,6 @@ This command establishes the product vision, architecture decisions, and design 
 
 Also creates `README.md` if it doesn't exist.
 
----
 
 ## STEP 1: Product Definition
 
@@ -67,7 +65,6 @@ How will you know it's working?
 
 ### 1.6 Project Name
 
----
 
 ## STEP 2: Architecture Decisions
 
@@ -99,10 +96,12 @@ For each significant choice, document:
 ## Decision: [Title]
 
 **Context:** Why this decision matters
-**Options considered:** What alternatives exist
+**Options considered:**
+1. [Option] — [brief rationale]
+2. [Option] — [brief rationale]
 **Decision:** What we chose
 **Rationale:** Why this option
-**Consequences:** What this enables/limits
+**Consequences:** What this locks in. What becomes hard to change.
 ```
 
 Common decisions to capture:
@@ -112,7 +111,6 @@ Common decisions to capture:
 - Error handling strategy
 - Testing approach
 
----
 
 ## STEP 3: Quality Approach
 
@@ -122,7 +120,6 @@ Choose one:
 2. **Balanced** - Production app. Good test coverage, WCAG AA, CI/CD.
 3. **Quality First** - Enterprise/regulated. High coverage, WCAG AAA, security audits.
 
----
 
 ## STEP 4: Design System (Required for UI Projects)
 
@@ -166,13 +163,92 @@ Establish baseline decisions:
 - Transitions: subtle, moderate, expressive?
 - Page transitions: none, fade, slide?
 
----
 
 ## Design System Output
 
-Generate `.claude/specs/design/design-system.md`:
+Generate `.claude/specs/design/design-system.md`. The frontmatter is required: enforce-specs uses it to auto-load this file whenever a UI file is edited, and that is the mechanism by which project design decisions take precedence over the generic craft floor in `.claude/specs/design/craft/`.
 
 ```markdown
+---
+name: design-system
+description: >
+  Project-specific design decisions. Colors, typography, spacing, motion,
+  component conventions. Required reading before creating or editing UI
+  files. Wins over generic craft specs where rules conflict.
+applies_to:
+  - "**/*.tsx"
+  - "**/*.jsx"
+  - "**/*.vue"
+  - "**/*.svelte"
+  - "**/*.astro"
+  - "**/*.mdx"
+  - "**/*.html"
+  - "**/*.htm"
+  - "**/*.hbs"
+  - "**/*.handlebars"
+  - "**/*.ejs"
+  - "**/*.pug"
+  - "**/*.njk"
+  - "**/*.liquid"
+  - "**/*.erb"
+  - "**/*.twig"
+  - "**/*.cshtml"
+  - "**/*.razor"
+  - "**/*.vbhtml"
+  - "**/*.aspx"
+  - "**/*.ascx"
+  - "**/*.xaml"
+  - "**/*.storyboard"
+  - "**/*.xib"
+  - "**/res/layout/**/*.xml"
+  - "**/*.css"
+  - "**/*.scss"
+  - "**/*.sass"
+  - "**/*.less"
+  - "**/*.styl"
+  - "**/*.stylus"
+  - "**/*.pcss"
+  - "**/*.postcss"
+  - "**/scripts/**/*.ts"
+  - "**/scripts/**/*.tsx"
+  - "**/scripts/**/*.js"
+  - "**/scripts/**/*.jsx"
+  - "**/scripts/**/*.mts"
+  - "**/scripts/**/*.cts"
+  - "**/animations/**/*.ts"
+  - "**/animations/**/*.tsx"
+  - "**/animations/**/*.js"
+  - "**/animations/**/*.jsx"
+  - "**/motion/**/*.ts"
+  - "**/motion/**/*.tsx"
+  - "**/motion/**/*.js"
+  - "**/motion/**/*.jsx"
+  - "**/effects/**/*.ts"
+  - "**/effects/**/*.tsx"
+  - "**/effects/**/*.js"
+  - "**/effects/**/*.jsx"
+  - "**/hooks/use*.ts"
+  - "**/hooks/use*.tsx"
+excludes:
+  - "node_modules/**"
+  - ".next/**"
+  - ".nuxt/**"
+  - ".svelte-kit/**"
+  - ".output/**"
+  - ".angular/**"
+  - "dist/**"
+  - "build/**"
+  - "out/**"
+  - "target/**"
+  - "coverage/**"
+  - "**/vendor/**"
+  - "**/*.min.css"
+  - "**/*.min.js"
+  - "**/*.bundle.css"
+  - ".claude/**"
+category: design
+---
+
 # Design System
 
 ## Visual Direction
@@ -227,15 +303,69 @@ Generate `.claude/specs/design/design-system.md`:
 [Describe transition approach]
 ```
 
-Update stack-config.yaml:
+Add the design spec to stack-config.yaml (created in Step 5.5 below):
 
 ```yaml
-specs:
   design:
-    - design-system
+    - name: design-system
+      file: design/design-system.md
+      applies_to:
+        - "**/*.tsx"
+        - "**/*.jsx"
+        - "**/*.vue"
+        - "**/*.svelte"
+        - "**/*.astro"
+        - "**/*.mdx"
+        - "**/*.html"
+        - "**/*.htm"
+        - "**/*.hbs"
+        - "**/*.handlebars"
+        - "**/*.ejs"
+        - "**/*.pug"
+        - "**/*.njk"
+        - "**/*.liquid"
+        - "**/*.erb"
+        - "**/*.twig"
+        - "**/*.cshtml"
+        - "**/*.razor"
+        - "**/*.vbhtml"
+        - "**/*.aspx"
+        - "**/*.ascx"
+        - "**/*.xaml"
+        - "**/*.storyboard"
+        - "**/*.xib"
+        - "**/res/layout/**/*.xml"
+        - "**/*.css"
+        - "**/*.scss"
+        - "**/*.sass"
+        - "**/*.less"
+        - "**/*.styl"
+        - "**/*.stylus"
+        - "**/*.pcss"
+        - "**/*.postcss"
+        - "**/scripts/**/*.ts"
+        - "**/scripts/**/*.tsx"
+        - "**/scripts/**/*.js"
+        - "**/scripts/**/*.jsx"
+        - "**/scripts/**/*.mts"
+        - "**/scripts/**/*.cts"
+        - "**/animations/**/*.ts"
+        - "**/animations/**/*.tsx"
+        - "**/animations/**/*.js"
+        - "**/animations/**/*.jsx"
+        - "**/motion/**/*.ts"
+        - "**/motion/**/*.tsx"
+        - "**/motion/**/*.js"
+        - "**/motion/**/*.jsx"
+        - "**/effects/**/*.ts"
+        - "**/effects/**/*.tsx"
+        - "**/effects/**/*.js"
+        - "**/effects/**/*.jsx"
+        - "**/hooks/use*.ts"
+        - "**/hooks/use*.tsx"
+      description: "Visual decisions (wins over craft floor)"
 ```
 
----
 
 ## Project Structure Templates
 
@@ -393,7 +523,6 @@ tests/              # Test files
 - Components: PascalCase (Button.tsx)
 ```
 
----
 
 ## STEP 5: Generate Outputs
 
@@ -439,8 +568,12 @@ Generate `.claude/specs/architecture/decisions.md`:
 
 ### Decision 1: [Title]
 **Context:** ...
+**Options considered:**
+1. [Option] — [brief rationale]
+2. [Option] — [brief rationale]
 **Decision:** ...
 **Rationale:** ...
+**Consequences:** What this locks in. What becomes hard to change.
 
 [Continue for each decision from 2.3]
 ```
@@ -453,18 +586,96 @@ Generate `.claude/specs/architecture/project-structure.md` based on solution typ
 
 Generate `.claude/specs/design/design-system.md` (see Step 4 output format).
 
-### 5.5 Update stack-config.yaml
+### 5.5 Create or update stack-config.yaml
+
+If `.claude/specs/stack-config.yaml` doesn't exist yet, create it. If it exists, add the new specs.
 
 ```yaml
+# Stack Configuration
+# Created by /init-project, updated by /sync-stack
+
+name: "[project-name]"
+description: "[from project brief]"
+
+# Tech stack — filled in by /sync-stack after detection
+stack: {}
+
+# Specs registered so far
 specs:
   architecture:
-    - decisions
-    - project-structure
-  design:        # Only if UI project
-    - design-system
+    - name: decisions
+      file: architecture/decisions.md
+      applies_to: []
+      description: "Key technical choices (ADRs)"
+
+    - name: project-structure
+      file: architecture/project-structure.md
+      applies_to: []
+      description: "Where files go"
+
+  # Only if UI project:
+  design:
+    - name: design-system
+      file: design/design-system.md
+      applies_to:
+        - "**/*.tsx"
+        - "**/*.jsx"
+        - "**/*.vue"
+        - "**/*.svelte"
+        - "**/*.astro"
+        - "**/*.mdx"
+        - "**/*.html"
+        - "**/*.htm"
+        - "**/*.hbs"
+        - "**/*.handlebars"
+        - "**/*.ejs"
+        - "**/*.pug"
+        - "**/*.njk"
+        - "**/*.liquid"
+        - "**/*.erb"
+        - "**/*.twig"
+        - "**/*.cshtml"
+        - "**/*.razor"
+        - "**/*.vbhtml"
+        - "**/*.aspx"
+        - "**/*.ascx"
+        - "**/*.xaml"
+        - "**/*.storyboard"
+        - "**/*.xib"
+        - "**/res/layout/**/*.xml"
+        - "**/*.css"
+        - "**/*.scss"
+        - "**/*.sass"
+        - "**/*.less"
+        - "**/*.styl"
+        - "**/*.stylus"
+        - "**/*.pcss"
+        - "**/*.postcss"
+        - "**/scripts/**/*.ts"
+        - "**/scripts/**/*.tsx"
+        - "**/scripts/**/*.js"
+        - "**/scripts/**/*.jsx"
+        - "**/scripts/**/*.mts"
+        - "**/scripts/**/*.cts"
+        - "**/animations/**/*.ts"
+        - "**/animations/**/*.tsx"
+        - "**/animations/**/*.js"
+        - "**/animations/**/*.jsx"
+        - "**/motion/**/*.ts"
+        - "**/motion/**/*.tsx"
+        - "**/motion/**/*.js"
+        - "**/motion/**/*.jsx"
+        - "**/effects/**/*.ts"
+        - "**/effects/**/*.tsx"
+        - "**/effects/**/*.js"
+        - "**/effects/**/*.jsx"
+        - "**/hooks/use*.ts"
+        - "**/hooks/use*.tsx"
+      description: "Visual decisions (wins over craft floor)"
 ```
 
----
+This gives `/sync-stack` a foundation to build on. It will add `stack:` details, `coding:` specs, `config:` specs, and `applies_to` patterns.
+
 
 ## After This
 
@@ -472,4 +683,4 @@ Run `/sync-stack` to:
 1. Install dependencies based on your tech direction
 2. Wire configs together properly
 3. Generate coding specs from official docs
-4. Create wiring diagram showing how everything connects
+4. Create system map showing how everything connects

@@ -1,3 +1,63 @@
+---
+name: design-system
+description: >
+  Project-specific design decisions. Colors, typography, spacing, motion,
+  component conventions. Required reading before creating or editing UI
+  files. Wins over generic craft specs where rules conflict.
+applies_to:
+  - "**/*.tsx"
+  - "**/*.jsx"
+  - "**/*.vue"
+  - "**/*.svelte"
+  - "**/*.astro"
+  - "**/*.mdx"
+  - "**/*.html"
+  - "**/*.htm"
+  - "**/*.hbs"
+  - "**/*.handlebars"
+  - "**/*.ejs"
+  - "**/*.pug"
+  - "**/*.njk"
+  - "**/*.liquid"
+  - "**/*.erb"
+  - "**/*.twig"
+  - "**/*.cshtml"
+  - "**/*.razor"
+  - "**/*.vbhtml"
+  - "**/*.aspx"
+  - "**/*.ascx"
+  - "**/*.xaml"
+  - "**/*.storyboard"
+  - "**/*.xib"
+  - "**/res/layout/**/*.xml"
+  - "**/*.css"
+  - "**/*.scss"
+  - "**/*.sass"
+  - "**/*.less"
+  - "**/*.styl"
+  - "**/*.stylus"
+  - "**/*.pcss"
+  - "**/*.postcss"
+excludes:
+  - "node_modules/**"
+  - ".next/**"
+  - ".nuxt/**"
+  - ".svelte-kit/**"
+  - ".output/**"
+  - ".angular/**"
+  - "dist/**"
+  - "build/**"
+  - "out/**"
+  - "target/**"
+  - "coverage/**"
+  - "**/vendor/**"
+  - "**/*.min.css"
+  - "**/*.min.js"
+  - "**/*.bundle.css"
+  - ".claude/**"
+category: design
+---
+
 # Design System
 
 ## Visual Direction

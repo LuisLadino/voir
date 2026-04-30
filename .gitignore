@@ -31,3 +31,7 @@ pnpm-debug.log*
 
 # TypeScript
 *.tsbuildinfo
+
+# Claude Code
+.claude/session-state.json
+.claude/settings.local.json

@@ -1,0 +1,775 @@
+{
+  "$schema_version": 1,
+  "description": "Lens augmentation registry. Read by .claude/hooks/context/lens-router.cjs. Each lens has zero or more augmenting moves. Each move has triggers, an attachment point, and a skill path. A move fires when its trigger patterns match the user prompt. Firing injects a directive that tells Claude to invoke the linked skill before responding.",
+  "attachment_points": [
+    "session_start",
+    "during_research",
+    "during_define",
+    "during_ideate",
+    "ideate_to_build",
+    "during_build",
+    "build_to_test",
+    "during_test",
+    "during_review",
+    "review_to_commit"
+  ],
+  "lenses": {
+    "pm": {
+      "description": "Product management. Outcome thinking, risk framing, prioritization, opportunity cost.",
+      "moves": [
+        {
+          "name": "pre-mortem",
+          "attachment": "ideate_to_build",
+          "triggers": [
+            "let's build",
+            "lets build",
+            "ready to build",
+            "ready to implement",
+            "i'm about to build",
+            "im about to build",
+            "i'm about to start building",
+            "im about to start building",
+            "i'm about to ship",
+            "im about to ship",
+            "start building",
+            "commit to this",
+            "locking this in",
+            "ready to ship"
+          ],
+          "skill": "pre-mortem"
+        }
+      ]
+    },
+    "ux": {
+      "description": "User experience and human-computer interaction. User needs, usability, research synthesis.",
+      "moves": [
+        {
+          "name": "heuristic-scan",
+          "attachment": "during_review",
+          "triggers": [
+            "ready for review",
+            "looks good to me",
+            "does this feel right",
+            "usability check",
+            "heuristic pass",
+            "any ux issues",
+            "before i ship this ux"
+          ],
+          "skill": "heuristic-scan"
+        },
+        {
+          "name": "trunk-test",
+          "attachment": "during_test",
+          "triggers": [
+            "does this make sense",
+            "is this clear",
+            "can someone use this",
+            "first-time user",
+            "new to this",
+            "pretend you don't know",
+            "cold read",
+            "six months from now",
+            "fresh eyes"
+          ],
+          "skill": "trunk-test"
+        },
+        {
+          "name": "signifier-audit",
+          "attachment": "during_build",
+          "triggers": [
+            "wire this up",
+            "connect the ui",
+            "make this clickable",
+            "hook up the trigger",
+            "let the user",
+            "add a flag",
+            "add a command",
+            "add a hook",
+            "ui is ready"
+          ],
+          "skill": "signifier-audit"
+        },
+        {
+          "name": "assumption-reframe",
+          "attachment": "during_research",
+          "triggers": [
+            "let's research",
+            "look into",
+            "figure out why",
+            "what do users want",
+            "what should this do",
+            "user needs",
+            "the problem is",
+            "what we want to know",
+            "the goal is"
+          ],
+          "skill": "assumption-reframe"
+        }
+      ]
+    },
+    "design": {
+      "description": "Visual and interaction design craft. Typography, hierarchy, motion, composition.",
+      "moves": [
+        {
+          "name": "reference-triangulation",
+          "attachment": "during_ideate",
+          "triggers": [
+            "let's set the direction",
+            "lets set the direction",
+            "what should this look like",
+            "let's pick a style",
+            "lets pick a style",
+            "going for a vibe",
+            "design direction",
+            "pick references",
+            "visual direction",
+            "what's the feel",
+            "whats the feel"
+          ],
+          "skill": "reference-triangulation"
+        },
+        {
+          "name": "type-specimen",
+          "attachment": "ideate_to_build",
+          "triggers": [
+            "pick a font",
+            "font pairing",
+            "lock the typography",
+            "set the type",
+            "choose a font",
+            "typography direction",
+            "commit to the font",
+            "go with inter",
+            "go with this font"
+          ],
+          "skill": "type-specimen"
+        },
+        {
+          "name": "affordance-audit",
+          "attachment": "during_test",
+          "triggers": [
+            "is this obvious",
+            "will users know",
+            "discoverability",
+            "affordance",
+            "can they tell",
+            "does this look clickable",
+            "how do they know",
+            "test the ui",
+            "try the ui",
+            "walk through the ui"
+          ],
+          "skill": "affordance-audit"
+        },
+        {
+          "name": "hierarchy-squint",
+          "attachment": "during_review",
+          "triggers": [
+            "review the design",
+            "is the hierarchy right",
+            "does this read",
+            "feels flat",
+            "everything looks the same",
+            "does this have hierarchy",
+            "what stands out"
+          ],
+          "skill": "hierarchy-squint"
+        }
+      ]
+    },
+    "engineering": {
+      "description": "Systems architecture, trade-offs, failure modes, implementation judgment.",
+      "moves": [
+        {
+          "name": "boring-check",
+          "attachment": "during_ideate",
+          "triggers": [
+            "let's use",
+            "lets use",
+            "we could use",
+            "add a library",
+            "pull in",
+            "new dependency",
+            "switch to",
+            "migrate to",
+            "rewrite in",
+            "use a framework"
+          ],
+          "skill": "boring-check"
+        },
+        {
+          "name": "reversibility-classify",
+          "attachment": "ideate_to_build",
+          "triggers": [
+            "let's go with",
+            "lets go with",
+            "we'll use",
+            "well use",
+            "locking in",
+            "final answer",
+            "decision is",
+            "going with",
+            "committing to the approach",
+            "final call",
+            "shape of this",
+            "architecture is"
+          ],
+          "skill": "reversibility-classify"
+        },
+        {
+          "name": "chesterton-audit",
+          "attachment": "during_build",
+          "triggers": [
+            "delete this",
+            "remove this",
+            "clean up",
+            "why is this here",
+            "looks unused",
+            "can we drop",
+            "dead code",
+            "strip out",
+            "refactor away",
+            "rewrite this",
+            "redo this"
+          ],
+          "skill": "chesterton-audit"
+        },
+        {
+          "name": "observable-surface-audit",
+          "attachment": "during_review",
+          "triggers": [
+            "change the output",
+            "change the format",
+            "update the schema",
+            "change the trigger",
+            "update the config",
+            "bump the version",
+            "breaking change",
+            "this is internal",
+            "downstream will be fine",
+            "sync the kit"
+          ],
+          "skill": "observable-surface-audit"
+        }
+      ]
+    },
+    "systems-thinking": {
+      "description": "Feedback loops, emergence, second-order effects, leverage points.",
+      "moves": [
+        {
+          "name": "second-order-check",
+          "attachment": "ideate_to_build",
+          "triggers": [
+            "quick fix",
+            "just add a",
+            "one more hook",
+            "just patch it",
+            "band-aid",
+            "bandaid",
+            "workaround",
+            "add a check",
+            "add a guard",
+            "hotfix",
+            "i'll just",
+            "ill just"
+          ],
+          "skill": "second-order-check"
+        },
+        {
+          "name": "leverage-point-scan",
+          "attachment": "during_ideate",
+          "triggers": [
+            "how should we fix",
+            "what's the right intervention",
+            "whats the right intervention",
+            "best place to fix",
+            "where should this live",
+            "tweak the value",
+            "change the default",
+            "adjust the threshold",
+            "add a rule",
+            "change the config",
+            "bump the timeout"
+          ],
+          "skill": "leverage-point-scan"
+        },
+        {
+          "name": "symptom-vs-root",
+          "attachment": "during_define",
+          "triggers": [
+            "something's off",
+            "somethings off",
+            "this keeps happening",
+            "weird behavior",
+            "not sure why",
+            "intermittent",
+            "flaky",
+            "happens sometimes",
+            "recurring",
+            "still broken",
+            "still happening"
+          ],
+          "skill": "symptom-vs-root"
+        }
+      ]
+    },
+    "data-science": {
+      "description": "Evidence over opinion. Measurement, causal inference, data quality.",
+      "moves": [
+        {
+          "name": "name-the-metric",
+          "attachment": "during_define",
+          "triggers": [
+            "the data shows",
+            "the data says",
+            "what does the data say",
+            "the numbers say",
+            "usage is up",
+            "usage is down",
+            "activation rate",
+            "retention is",
+            "the signal is",
+            "adoption is"
+          ],
+          "skill": "name-the-metric"
+        },
+        {
+          "name": "pre-register-decision",
+          "attachment": "during_ideate",
+          "triggers": [
+            "let's measure",
+            "i want to test",
+            "let's run an experiment",
+            "a/b test",
+            "try it and see",
+            "let's check if",
+            "let's see if it works",
+            "wait for data",
+            "let the data decide",
+            "measure impact"
+          ],
+          "skill": "pre-register-decision"
+        },
+        {
+          "name": "counterfactual-check",
+          "attachment": "during_review",
+          "triggers": [
+            "this caused",
+            "because we shipped",
+            "ever since we",
+            "it's working because",
+            "the fix worked",
+            "usage went up after",
+            "dropped after we",
+            "correlates with",
+            "leading indicator",
+            "proves that"
+          ],
+          "skill": "counterfactual-check"
+        },
+        {
+          "name": "define-the-sample",
+          "attachment": "during_research",
+          "triggers": [
+            "users like it",
+            "people find",
+            "sessions show",
+            "logs show",
+            "the data covers",
+            "in our data",
+            "from the logs",
+            "looking at sessions",
+            "looking at runs",
+            "general pattern",
+            "most users",
+            "typical session"
+          ],
+          "skill": "define-the-sample"
+        }
+      ]
+    },
+    "ai-ml": {
+      "description": "ML lifecycle: build, evaluate, deploy, monitor. Bias, drift, responsible AI.",
+      "moves": [
+        {
+          "name": "eval-first",
+          "attachment": "during_define",
+          "triggers": [
+            "new skill",
+            "new hook",
+            "new prompt",
+            "llm feature",
+            "ai-assisted",
+            "add a trigger",
+            "router logic",
+            "classifier",
+            "system prompt",
+            "eval this",
+            "does this work well"
+          ],
+          "skill": "eval-first"
+        },
+        {
+          "name": "failure-mode-taxonomy",
+          "attachment": "ideate_to_build",
+          "triggers": [
+            "red team",
+            "red-team",
+            "adversarial",
+            "jailbreak",
+            "prompt injection",
+            "abuse case",
+            "attack surface",
+            "what could go wrong with this prompt",
+            "safety check",
+            "harmful output",
+            "exploit"
+          ],
+          "skill": "failure-mode-taxonomy"
+        },
+        {
+          "name": "look-at-your-data",
+          "attachment": "during_build",
+          "triggers": [
+            "it's not working",
+            "its not working",
+            "output is off",
+            "quality is bad",
+            "tune the prompt",
+            "adjust the prompt",
+            "improve the output",
+            "the model isn't",
+            "the model isnt",
+            "hallucinating",
+            "wrong answer",
+            "debug this prompt",
+            "fix the system prompt"
+          ],
+          "skill": "look-at-your-data"
+        },
+        {
+          "name": "generalization-check",
+          "attachment": "build_to_test",
+          "triggers": [
+            "this works now",
+            "passes the test",
+            "confirmed working",
+            "that fixed it",
+            "tested it and it works",
+            "good to go",
+            "ready to ship it"
+          ],
+          "skill": "generalization-check"
+        }
+      ]
+    },
+    "business": {
+      "description": "Value creation and capture. ROI, viability, regulation, market fit.",
+      "moves": [
+        {
+          "name": "strategy-kernel",
+          "attachment": "during_define",
+          "triggers": [
+            "what's the strategy",
+            "whats the strategy",
+            "our strategy",
+            "strategic approach",
+            "how do we approach this",
+            "plan of attack",
+            "what's the play",
+            "whats the play",
+            "long-term plan",
+            "strategy for this",
+            "what's our angle",
+            "whats our angle"
+          ],
+          "skill": "strategy-kernel"
+        },
+        {
+          "name": "jobs-to-be-done",
+          "attachment": "during_research",
+          "triggers": [
+            "who's it for",
+            "whos it for",
+            "what's the user need",
+            "whats the user need",
+            "what problem does this solve",
+            "why would someone use this",
+            "target user",
+            "user need",
+            "who uses this",
+            "is there a need",
+            "does anyone want this"
+          ],
+          "skill": "jobs-to-be-done"
+        },
+        {
+          "name": "moat-check",
+          "attachment": "ideate_to_build",
+          "triggers": [
+            "is this defensible",
+            "what's our edge",
+            "whats our edge",
+            "why us",
+            "competitive advantage",
+            "moat",
+            "why won't someone copy this",
+            "why wont someone copy this",
+            "what makes this hard to copy",
+            "durable advantage",
+            "why this will last"
+          ],
+          "skill": "moat-check"
+        },
+        {
+          "name": "roi-per-hour",
+          "attachment": "during_ideate",
+          "triggers": [
+            "worth my time",
+            "is this worth doing",
+            "should i spend time",
+            "worth the effort",
+            "how do i prioritize",
+            "what's the roi",
+            "whats the roi",
+            "worth building",
+            "worth pursuing",
+            "bang for the buck",
+            "opportunity cost"
+          ],
+          "skill": "roi-per-hour"
+        }
+      ]
+    },
+    "leadership": {
+      "description": "Influence through clarity. Alignment, stakeholders, decision framing.",
+      "moves": [
+        {
+          "name": "decision-owner",
+          "attachment": "during_ideate",
+          "triggers": [
+            "we need to decide",
+            "we have to decide",
+            "what should we do",
+            "which approach",
+            "let's figure out",
+            "lets figure out",
+            "should i",
+            "who decides",
+            "who owns this",
+            "who should decide",
+            "need a call on"
+          ],
+          "skill": "decision-owner"
+        },
+        {
+          "name": "commitment-close",
+          "attachment": "ideate_to_build",
+          "triggers": [
+            "so we decided",
+            "i think we're going to",
+            "i think were going to",
+            "alright, we're doing",
+            "alright were doing",
+            "moving forward with",
+            "makes sense, let's",
+            "makes sense lets",
+            "we agreed",
+            "sounds good, let's",
+            "sounds good lets"
+          ],
+          "skill": "commitment-close"
+        },
+        {
+          "name": "delegation-level",
+          "attachment": "during_build",
+          "triggers": [
+            "have the agent",
+            "let the agent",
+            "spin up a subagent",
+            "spin up an agent",
+            "handoff to",
+            "hand off to",
+            "delegate this",
+            "have claude",
+            "async this",
+            "run in parallel",
+            "fire off an agent"
+          ],
+          "skill": "delegation-level"
+        },
+        {
+          "name": "stakeholder-map",
+          "attachment": "during_define",
+          "triggers": [
+            "get buy-in",
+            "get buyin",
+            "align on this",
+            "who needs to approve",
+            "sell this",
+            "pitch this",
+            "convince",
+            "push back on",
+            "stakeholders",
+            "make the case",
+            "who should i talk to"
+          ],
+          "skill": "stakeholder-map"
+        }
+      ]
+    },
+    "marketing": {
+      "description": "Positioning, audience, differentiation, go-to-market.",
+      "moves": [
+        {
+          "name": "competitive-alternatives",
+          "attachment": "during_define",
+          "triggers": [
+            "position this",
+            "positioning",
+            "how do i pitch",
+            "how should i pitch",
+            "write my bio",
+            "cover letter",
+            "landing page copy",
+            "describe the product",
+            "what makes this different",
+            "unique value",
+            "pitch the kit",
+            "what's our edge",
+            "whats our edge"
+          ],
+          "skill": "competitive-alternatives"
+        },
+        {
+          "name": "audience-lock",
+          "attachment": "during_define",
+          "triggers": [
+            "who is this for",
+            "target audience",
+            "write to everyone",
+            "broad appeal",
+            "write a post",
+            "write for",
+            "launch this",
+            "announce this",
+            "tell people about",
+            "who cares about this"
+          ],
+          "skill": "audience-lock"
+        },
+        {
+          "name": "switch-trigger",
+          "attachment": "during_research",
+          "triggers": [
+            "why would they switch",
+            "why would they care",
+            "what's the hook",
+            "whats the hook",
+            "why now",
+            "struggling moment",
+            "what's the trigger",
+            "whats the trigger",
+            "what's the pain",
+            "whats the pain",
+            "jobs to be done",
+            "what job is this doing",
+            "why would they pick us"
+          ],
+          "skill": "switch-trigger"
+        },
+        {
+          "name": "value-over-feature",
+          "attachment": "during_review",
+          "triggers": [
+            "review the copy",
+            "tighten this up",
+            "clean up the bio",
+            "polish the pitch",
+            "is this copy good",
+            "read this over",
+            "edit my draft",
+            "proof this",
+            "ship the post",
+            "one more pass"
+          ],
+          "skill": "value-over-feature"
+        }
+      ]
+    },
+    "communication": {
+      "description": "Clarity, brevity, story. Audience-first framing.",
+      "moves": [
+        {
+          "name": "lead-with-decision",
+          "attachment": "during_build",
+          "triggers": [
+            "draft an email",
+            "draft the email",
+            "write the issue",
+            "write the pr",
+            "write the handoff",
+            "write up",
+            "send this",
+            "application",
+            "writing sample",
+            "bio",
+            "one-pager",
+            "pitch",
+            "memo"
+          ],
+          "skill": "lead-with-decision"
+        },
+        {
+          "name": "name-the-reader",
+          "attachment": "during_define",
+          "triggers": [
+            "write a",
+            "draft a",
+            "put together a",
+            "start writing",
+            "portfolio piece",
+            "case study",
+            "about me",
+            "intro email",
+            "cold outreach"
+          ],
+          "skill": "name-the-reader"
+        },
+        {
+          "name": "curse-check",
+          "attachment": "review_to_commit",
+          "triggers": [
+            "wrap up",
+            "write the handoff",
+            "note to self",
+            "for future me",
+            "explain what",
+            "summary of",
+            "send to the team",
+            "share context",
+            "onboard",
+            "documentation"
+          ],
+          "skill": "curse-check"
+        },
+        {
+          "name": "concretize-pass",
+          "attachment": "during_review",
+          "triggers": [
+            "polish the draft",
+            "final pass",
+            "tighten this up",
+            "review the copy",
+            "before i send",
+            "before i publish",
+            "ready to send",
+            "clean up the writing",
+            "edit pass"
+          ],
+          "skill": "concretize-pass"
+        }
+      ]
+    }
+  }
+}

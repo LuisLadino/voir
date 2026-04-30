@@ -4,12 +4,12 @@
  * Session Init Hook
  *
  * Event: SessionStart
- * Purpose: Initialize session tracking in brain and check for changes
+ * Purpose: Initialize session tracking and check for project changes
  *
  * Does:
- * - Creates session tracking file in brain
+ * - Creates session tracking file
  * - Checks sync state for project changes
- * - Cleans up old session files
+ * - Cleans up old session tracking files
  */
 
 const fs = require('fs');
@@ -17,7 +17,6 @@ const path = require('path');
 const crypto = require('crypto');
 
 const {
-  findWorkspaceBrain,
   initSession,
   cleanupOldSessions
 } = require('../lib/session-utils.cjs');
@@ -25,6 +24,7 @@ const {
 const SYNC_STATE_PATH = '.claude/specs/.sync-state.json';
 
 const WATCHED_FILES = [
+  // JavaScript/TypeScript
   'package.json',
   'package-lock.json',
   'yarn.lock',
@@ -39,7 +39,39 @@ const WATCHED_FILES = [
   'next.config.ts',
   'next.config.mjs',
   'astro.config.mjs',
-  'astro.config.ts'
+  'astro.config.ts',
+  // Python
+  'pyproject.toml',
+  'setup.py',
+  'setup.cfg',
+  'requirements.txt',
+  'Pipfile',
+  'Pipfile.lock',
+  'poetry.lock',
+  // Rust
+  'Cargo.toml',
+  'Cargo.lock',
+  // Go
+  'go.mod',
+  'go.sum',
+  // Swift
+  'Package.swift',
+  'Package.resolved',
+  // Ruby
+  'Gemfile',
+  'Gemfile.lock',
+  // PHP
+  'composer.json',
+  'composer.lock',
+  // Java/Kotlin
+  'build.gradle',
+  'build.gradle.kts',
+  'pom.xml',
+  // .NET
+  'Directory.Build.props',
+  // Elixir
+  'mix.exs',
+  'mix.lock'
 ];
 
 function getFileHash(filePath) {
@@ -64,19 +96,19 @@ function checkForChanges() {
   const cwd = process.cwd();
   const syncState = loadSyncState();
 
-  // No sync state = never synced
   if (!syncState) {
-    const hasPackageJson = fs.existsSync(path.join(cwd, 'package.json'));
-    if (hasPackageJson) {
+    // Check for any dependency manifest, not just package.json
+    const manifests = ['package.json', 'pyproject.toml', 'Cargo.toml', 'go.mod', 'Package.swift', 'Gemfile', 'composer.json', 'build.gradle', 'pom.xml', 'mix.exs'];
+    const hasManifest = manifests.some(m => fs.existsSync(path.join(cwd, m)));
+    if (hasManifest) {
       return {
         changed: true,
-        reason: 'Project has never been synced. Run /sync-stack to set up specs and wiring.'
+        reason: 'Project has never been synced. Run /sync-stack to set up specs and system map.'
       };
     }
     return { changed: false };
   }
 
-  // Compare current hashes to stored hashes
   const changes = [];
   for (const file of WATCHED_FILES) {
     const filePath = path.join(cwd, file);
@@ -102,78 +134,42 @@ function checkForChanges() {
   return { changed: false };
 }
 
-const LOCAL_SESSION_STATE = '.claude/session-state.json';
+const LEGACY_SESSION_STATE = '.claude/session-state.json';
 
-function resetLocalSessionState() {
+// session-state.json was removed in #102 — per-prompt enforcement state now
+// lives in the tracking JSONL event log. Unlink any leftover file from an
+// older kit version so inspection of .claude/ isn't misleading.
+function cleanupLegacySessionState() {
   try {
-    const state = {
-      specsRead: false,
-      sessionStart: new Date().toISOString()
-    };
-    fs.writeFileSync(LOCAL_SESSION_STATE, JSON.stringify(state, null, 2));
-  } catch (e) {
-    // Ignore errors
-  }
-}
-
-function loadProjectContext() {
-  const context = [];
-
-  // Check for project brief
-  const briefPath = '.claude/specs/project-brief.md';
-  if (fs.existsSync(briefPath)) {
-    const brief = fs.readFileSync(briefPath, 'utf8');
-    const summary = brief.split('\n').slice(0, 10).join('\n');
-    context.push(`Project: ${summary.substring(0, 200)}...`);
-  }
-
-  // Check for stack config
-  const stackPath = '.claude/specs/stack-config.yaml';
-  if (fs.existsSync(stackPath)) {
-    const stack = fs.readFileSync(stackPath, 'utf8');
-    const frameworkMatch = stack.match(/framework:\s*"?([^"\n]+)"?/);
-    if (frameworkMatch) {
-      context.push(`Stack: ${frameworkMatch[1]}`);
+    if (fs.existsSync(LEGACY_SESSION_STATE)) {
+      fs.unlinkSync(LEGACY_SESSION_STATE);
     }
-  }
-
-  return context;
+  } catch (e) {}
 }
 
-// Read hook input from stdin
-let input = '';
-process.stdin.setEncoding('utf8');
-process.stdin.on('data', chunk => input += chunk);
-process.stdin.on('end', () => {
-  try {
-    const data = JSON.parse(input);
-    handleHook(data);
-  } catch (e) {
-    // Still try to init even if parsing fails
-    try {
-      const brainPath = findWorkspaceBrain(process.cwd());
-      initSession(brainPath);
-    } catch (e2) {}
-    process.exit(0);
-  }
-});
+const { runStdinHook } = require('../lib/stdin-hook.cjs');
+runStdinHook(handleHook, { mode: 'observability' });
 
 function handleHook(data) {
   const { source } = data;
   const cwd = process.cwd();
 
-  // Find brain folder for this workspace
-  const brainPath = findWorkspaceBrain(cwd);
-
-  // Initialize session tracking in brain
+  // Initialize session tracking
   if (source === 'startup' || source === 'clear') {
-    const sessionId = initSession(brainPath);
+    initSession(cwd);
+    cleanupOldSessions(cwd);
+  }
 
-    // Clean up old sessions (7+ days old)
-    cleanupOldSessions(brainPath);
+  // Project-specific work — only run inside a framework project
+  const isFrameworkProject = fs.existsSync(path.join(cwd, '.claude'));
+  if (!isFrameworkProject) {
+    process.exit(0);
+    return;
+  }
 
-    // Reset local session state (for spec enforcement)
-    resetLocalSessionState();
+  // Remove legacy session-state.json if it exists (replaced by tracking events)
+  if (source === 'startup' || source === 'clear') {
+    cleanupLegacySessionState();
   }
 
   // Check for project changes
@@ -186,14 +182,8 @@ function handleHook(data) {
     if (result.lastSync) {
       console.log(`Last sync: ${result.lastSync}`);
     }
-    console.log('\nConsider running /sync-stack to update wiring and specs.');
+    console.log('\nConsider running /sync-stack to update specs and system map.');
     console.log('========================================\n');
-  }
-
-  // Load and display project context
-  const context = loadProjectContext();
-  if (context.length > 0) {
-    console.log(context.join(' | '));
   }
 
   process.exit(0);

@@ -1,51 +1,114 @@
-# Claude Code Project Instructions
+# Project Instructions
 
-## Prime Directives
+## Rules
 
-- **Root cause solutions** - Solve the underlying problem, not symptoms
-- **Follow instructions exactly** - Don't skip or shortcut what I explicitly asked for
-- **Trust code over docs** - Documentation can be outdated. When in doubt, read the implementation
-- **Learn from errors** - When corrected, explain why and whether instructions should change
-- **Use slash commands** - Before acting, check if a command exists for this task
-- **Keep it simple** - Easy to read, predictable patterns, easy to modify
-- **Verify before presenting** - Before showing work, check that it actually does what you claim
+- NEVER recommend shipping known bugs, incomplete features, or poor quality work. During execution, scope discipline applies: build what was agreed, don't add unrequested features. During discussion, planning, and review, give the full picture. If something is broken or quality is insufficient, say so. Time and token cost are not factors in quality decisions. Let Luis decide what to defer — do not pre-cut scope or argue for "good enough." Polish is the baseline, not a goal. Minimum-viable mentality produces half-finished work regardless of whether the word "MVP" is used. Watch for signals: "we can add that later," "good enough for now," "v1 vs v2," "nice-to-have," "stretch," "just enough to work," "we will clean it up." When any of these surface, reframe: this is either in scope and gets polished now, or out of scope and gets a separate tracked issue. There is no middle bucket.
+- Before reporting a task complete, verify it actually works: run the test, execute the script, check the output. If you can't verify, say so explicitly rather than claiming success.
+- Report outcomes faithfully: if tests fail, say so with the relevant output. Never claim "all tests pass" when output shows failures. Never characterize incomplete work as done. When a check did pass, state it plainly. Do not hedge confirmed results with unnecessary disclaimers or re-verify things you already checked.
+- Cite sources for claims: file path and line number for code, command output for verifications.
+- Default to writing no comments in code. Only add one when the WHY is non-obvious: a hidden constraint, a workaround for a specific bug, behavior that would surprise a reader. Don't explain WHAT code does. Don't reference the current task or callers in comments.
+- Check context7 before claiming library patterns
+- NEVER claim limitations without checking documentation first
+- NEVER pattern-match plausible-sounding answers instead of verifying
+- NEVER state capabilities or limitations as fact without investigation
+- NEVER skip steps Luis explicitly asked for
+- NEVER respond to problems with avoidance (removing, skipping, deferring). Diagnose first. Understand the failure. THEN decide on action.
+- When you discover work that is out of scope for the current task, create a GitHub issue for it before continuing. Do not mention it and move on. Do not ask whether to track it. The issue can be minimal (title + one-line problem statement), but it must exist in the tracker before you continue. For security findings or sensitive context, describe the issue generically and confirm with the user before creating.
+- File GitHub issues by fix destination. Kit-owned files — anything listed in the active project's `.claude/.kit-manifest` — go to `LuisLadino/claude-kit` via `gh issue create --repo LuisLadino/claude-kit`. Project-custom files — anything in `.claude/` not in the manifest, plus project code, docs, and generated specs — stay in the active repo with plain `gh issue create`. Test: does the fix require a change to the kit repo? Yes → kit. No → active.
 
----
+## Kit vs Project Files
 
-## Reasoning
+Ownership is per-file via `.claude/.kit-manifest`, not per-directory. A single directory like `.claude/commands/` can contain both kit-synced files and project-custom files. Check the manifest to know which is which. Do not modify kit-owned files in downstream projects — changes will be overwritten on next sync.
 
-- **Problem first** - State what problem you're solving before suggesting a fix
-- **Think independently** - User's words are input, not answers.
-- **Logic check** - Does your suggestion actually solve the stated problem?
-- **Existing tools first** - Check if a tool, API, or pattern already solves it before building
-- **Explain your reasoning** - When making decisions, share why and how it compares to best practices
+**Kit-owned (listed in `.kit-manifest`, do not modify):**
+- `CLAUDE.md` — these instructions
+- `commands/` — kit-synced commands (project-custom commands alongside them are safe)
+- `hooks/` — kit-synced hooks (project-custom hooks alongside them are safe)
+- `skills/` — kit-synced skills (project-custom skills alongside them are safe)
+- `agents/` — kit-synced agent definitions (project-custom agents alongside them are safe)
+- `specs/kit/` and `specs/lenses/` — kit-owned spec subtrees
 
----
+**Project-specific (safe to modify):**
+- Any file in `.claude/` not listed in `.kit-manifest` — project-custom skill, command, agent, hook, or spec
+- `docs/` — project documentation and research
+- `specs/` — project rules and patterns, generated by /sync-stack (except `specs/kit/` and `specs/lenses/`)
+- `settings.local.json` — per-project permissions
+- `research/` — project research
+- `agent-memory/` — agent persistent memory
+- `agent-memory-local/` — agent local memory, gitignored
 
-## Execution
+## MCP Tools
 
-- **Show proof** - File path and line number for claims, command output for verifications
-- **Verify edits** - Read the file after editing to confirm the change
+Every project inherits Gmail, Google Calendar, and Google Drive via account-level Claude.ai connectors, plus context7 and antigravity at user scope. Do not install these per-project. See `.claude/specs/kit/mcp-configuration.md` for the full scope model and decision tree.
 
----
+## Workflow
 
-## Task Framing
+**Setup (once per project):**
+/init-project → /sync-stack → /plan
 
-When reporting what we're working on (for PreCompact to capture), frame as **outcomes**, not activities:
+**Working (repeatable):**
+GitHub Issue → /research → /define → /ideate → /build → /test → /review → /commit → Merge
 
-- **Good:** "Context persists after compaction" (verifiable outcome)
-- **Bad:** "Updated pre-compact.js" (activity, not verifiable)
+Skills map to design thinking phases. /research is the entry point. /build is the commitment point (creates branch, marks issue in-progress). Commit skill handles push + PR. Issue auto-closes on merge.
 
-Format for PreCompact extraction:
+**Planning (anytime):**
+Use /plan to create issues, review backlog, prioritize, manage milestones. GitHub Issues are the system of record.
 
-```
-## Task: [Outcome statement]
-- Status: [In progress / Complete]
-- Summary: [What changed and why it matters]
-```
+**Parallel/background work:**
+Use `/dispatch <issue-numbers>` to fire autonomous workers on independent issues. Each worker runs in its own git worktree and reports back on the next prompt. For issues that touch `.claude/hooks/**/*.cjs` or user-scope settings (Claude Code's built-in sensitive-file gate refuses Write/Edit there in non-interactive sessions), pass `--plan-only`: the worker stops after `/ideate` and posts its full implementation plan as an issue comment. The orchestrator applies the plan in a follow-up session.
 
-Outcomes should be:
+## GitHub Issues as Design Thinking Records
 
-- Verifiable: Can we check if this is true?
-- Strategic: Does it connect to Luis's goals?
-- Measurable: What would prove success?
+GitHub issues capture the design thinking journey, not just task status. Every issue should record the research, reasoning, alternatives considered, and why decisions were made.
+
+**When writing or updating issues:**
+- Document the WHY, not just the WHAT
+- Include alternatives considered and why they were rejected
+- Capture research findings and evidence as they happen
+- Use the design thinking phases to structure the journey
+
+**When to create a new issue vs continue the current one:**
+
+STAY on the current issue when: same root problem, issue found while testing, refinement of approach, Definition of Done not yet met.
+
+CREATE a new issue when: different Definition of Done, could be solved independently, different component or domain, would significantly expand current scope.
+
+**When to close an issue:**
+
+NEVER close an issue until the fix has been verified and tested. Writing code that should fix something is not the same as confirming it works. If you cannot verify in the current session, leave the issue open and document what was done.
+
+Do NOT use "Closes #X" in commits unless the fix has been tested and confirmed working.
+
+## Specs
+
+Specs define project rules and patterns in `.claude/specs/`. Before making changes, read the relevant specs. The enforce-specs hook blocks edits until you do.
+
+To generate specs: `/sync-stack`
+To add a library: `/sync-stack prisma`
+To add custom rules: `/sync-stack --custom api-conventions`
+
+## Hooks
+
+Hooks enforce behavior. Don't fight them.
+
+- **enforce-specs** — blocks edits until specs are read
+- **enforce-skills** — blocks git commit, requires Skill tool for full workflow
+- **enforce-plan** — blocks `gh issue create` until plan skill is read
+- **enforce-voice** — blocks pbcopy until voice guidelines reviewed and content revised
+- **block-dangerous** — blocks rm -rf, force push, credential exposure
+- **verify-before-stop** — checks for debug statements and incomplete skill steps
+- **awareness** — prompts for /analyze (run from claude-kit) after repeated tool failures
+
+If a hook blocks you, there's a reason.
+
+## Before Writing Content on Luis's Behalf
+
+When content will represent Luis externally: articles, emails, posts, bios, applications, portfolio.
+
+- **No em dashes.** Use periods or colons.
+- **No parens.** Use a comma, colon, or new sentence.
+- **No corporate speak.** No leverage, synergize, optimize, ensure, utilize, passionate, world-class, best-in-class, ninja, rockstar, guru.
+
+**Luis says:** "I don't know" when true, "I figured it out", "I learned...", "The constraint was...", "What worked was...", "The trade-off was..."
+
+**Luis NEVER says:** "I'm passionate about...", "leverage/synergize/optimize", "world-class/best-in-class", "ninja/rockstar/guru", "utilize" instead of "use", "ensure" instead of "make sure".

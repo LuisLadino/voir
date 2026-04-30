@@ -7,6 +7,7 @@ description: >
   contribution guidelines, clone and contribute, fork a project, or match external
   coding conventions.
 user-invocable: false
+model: haiku
 ---
 
 ## Trigger Phrases
@@ -24,8 +25,6 @@ Invoke this skill when you hear:
 
 **Set up your framework to match an open source project's patterns and contribution guidelines**
 
----
-
 ## Purpose
 
 Configure your coding framework to match an open source project's tech stack, coding patterns, and contribution guidelines so your contributions look like they were written by someone on the team.
@@ -35,8 +34,6 @@ Configure your coding framework to match an open source project's tech stack, co
 - You've cloned a repo and want to understand their codebase
 - You have an open source dependency in your project and want to contribute back to it
 - You need to match their coding specs before submitting a PR
-
----
 
 ## Step 1: Identify the Target Project
 
@@ -55,8 +52,6 @@ Which open source project do you want to contribute to?
 **If option 2:** Ask where the project code lives (directory path). Verify the path exists and contains source code. All analysis in later steps targets that directory, not the root project.
 
 **If option 3:** Ask for the repo URL. Clone it. cd into it. Ask the user to copy their `.claude/` directory in, then re-run the command. Stop here.
-
----
 
 ## Step 2: Project Overview
 
@@ -83,8 +78,6 @@ Ready to proceed? (yes/no)
 
 WAIT for user approval.
 
----
-
 ## Step 3: Detect Tech Stack
 
 Run `/sync-stack` targeting the project directory.
@@ -98,8 +91,6 @@ Run `/sync-stack` targeting the project directory.
 
 Display what was detected.
 
----
-
 ## Step 4: Analyze Codebase Patterns
 
 Run `/sync-stack` to analyze the project.
@@ -109,8 +100,6 @@ Run `/sync-stack` to analyze the project.
 - Create specs files matching their patterns
 
 Display discovered patterns.
-
----
 
 ## Step 5: Check Contribution Documentation
 
@@ -134,8 +123,6 @@ Update `.claude/specs/config/version-control.md` with their specific conventions
 
 If no contribution docs found, note this and use standard open source best practices.
 
----
-
 ## Step 6: Create Contribution Tracker
 
 Create `PROJECT-STATE.md` with:
@@ -147,8 +134,6 @@ Create `PROJECT-STATE.md` with:
 - Next steps checklist (find issue, claim it, create branch, etc.)
 - Session log for tracking progress
 
----
-
 ## Step 7: Completion Summary
 
 Show:
@@ -156,8 +141,6 @@ Show:
 - Where files were saved
 - Next steps for making a contribution
 - Reminder that the framework will now use THEIR patterns
-
----
 
 ## Error Handling
 
@@ -169,8 +152,6 @@ Note the limitation. Use framework defaults. The framework will still work but m
 
 ### If sync-stack fails
 List what succeeded and what failed. Suggest running `/sync-stack` manually later to retry.
-
----
 
 ## Notes
 

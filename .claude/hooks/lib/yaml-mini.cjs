@@ -1,0 +1,281 @@
+#!/usr/bin/env node
+
+/**
+ * Minimal YAML subset parser for kit config files.
+ *
+ * Zero runtime deps. Hand-rolled to the schema used by .claude/voice.yaml:
+ *
+ *   - Top-level map with string keys
+ *   - String scalars: plain, single-quoted, double-quoted
+ *   - null literal (unquoted `null`, lowercase, or `~`)
+ *   - Block scalars with `|` (literal, newlines preserved)
+ *   - Nested maps (arbitrary depth)
+ *   - Sequences of maps (`- key: value` with continuation lines)
+ *   - Comments via `#` (line-only or after whitespace on unquoted lines)
+ *
+ * Explicitly NOT supported:
+ *   - Anchors (&, *), tags (!!)
+ *   - Flow style [a, b] or {k: v}
+ *   - Folded block scalars (>), chomping modifiers (|-, |+, >-, >+)
+ *   - Numeric/boolean auto-conversion (all non-null scalars return as string)
+ *   - Explicit indent indicators
+ *
+ * Throws on parse errors. Caller is expected to try/catch.
+ */
+
+function parse(input) {
+  if (typeof input !== 'string') {
+    throw new Error('yaml-mini: input must be a string');
+  }
+  const rawLines = input.split('\n').map((text, i) => {
+    const indent = leadingSpaces(text);
+    const trimmed = text.slice(indent);
+    const commentStripped = stripInlineComment(trimmed);
+    return {
+      raw: text,
+      indent,
+      trimmed,
+      content: commentStripped,
+      isBlank: trimmed.length === 0,
+      isCommentOnly: trimmed.startsWith('#'),
+      n: i + 1
+    };
+  });
+  const state = { lines: rawLines, i: 0 };
+  skipInactive(state);
+  if (state.i >= state.lines.length) return {};
+  const first = state.lines[state.i];
+  if (first.indent !== 0) {
+    throw new Error(`yaml-mini: document must start at column 0 (line ${first.n})`);
+  }
+  const value = parseNode(state, -1);
+  skipInactive(state);
+  if (state.i < state.lines.length) {
+    const extra = state.lines[state.i];
+    throw new Error(`yaml-mini: unexpected content at line ${extra.n}`);
+  }
+  return value;
+}
+
+function leadingSpaces(text) {
+  const m = text.match(/^ +/);
+  return m ? m[0].length : 0;
+}
+
+function stripInlineComment(text) {
+  let inSingle = false;
+  let inDouble = false;
+  for (let k = 0; k < text.length; k++) {
+    const c = text[k];
+    if (c === "'" && !inDouble) inSingle = !inSingle;
+    else if (c === '"' && !inSingle) inDouble = !inDouble;
+    else if (c === '#' && !inSingle && !inDouble) {
+      if (k === 0 || /\s/.test(text[k - 1])) return text.slice(0, k).replace(/\s+$/, '');
+    }
+  }
+  return text.replace(/\s+$/, '');
+}
+
+function isActive(line) {
+  return !line.isBlank && !line.isCommentOnly && line.content.length > 0;
+}
+
+function skipInactive(state) {
+  while (state.i < state.lines.length && !isActive(state.lines[state.i])) state.i++;
+}
+
+function parseNode(state, parentIndent) {
+  skipInactive(state);
+  if (state.i >= state.lines.length) return {};
+  const first = state.lines[state.i];
+  if (first.indent <= parentIndent) {
+    throw new Error(`yaml-mini: expected indented content at line ${first.n}`);
+  }
+  if (first.content.startsWith('- ') || first.content === '-') {
+    return parseSequence(state, first.indent);
+  }
+  return parseMap(state, first.indent);
+}
+
+function parseMap(state, indent) {
+  const out = {};
+  while (state.i < state.lines.length) {
+    skipInactive(state);
+    if (state.i >= state.lines.length) break;
+    const line = state.lines[state.i];
+    if (line.indent < indent) break;
+    if (line.indent > indent) {
+      throw new Error(`yaml-mini: unexpected indent at line ${line.n}`);
+    }
+    if (line.content.startsWith('- ') || line.content === '-') break;
+    const [key, rest] = splitKeyValue(line.content, line.n);
+    state.i++;
+    if (rest === '|') {
+      out[key] = readBlockScalar(state, indent);
+    } else if (rest === '') {
+      skipInactive(state);
+      const next = state.lines[state.i];
+      if (next && next.indent > indent) {
+        out[key] = parseNode(state, indent);
+      } else {
+        out[key] = null;
+      }
+    } else if (rest === 'null' || rest === '~') {
+      out[key] = null;
+    } else {
+      out[key] = parseScalar(rest, line.n);
+    }
+  }
+  return out;
+}
+
+function parseSequence(state, indent) {
+  const out = [];
+  while (state.i < state.lines.length) {
+    skipInactive(state);
+    if (state.i >= state.lines.length) break;
+    const line = state.lines[state.i];
+    if (line.indent < indent) break;
+    if (line.indent > indent) {
+      throw new Error(`yaml-mini: unexpected indent in sequence at line ${line.n}`);
+    }
+    if (!(line.content.startsWith('- ') || line.content === '-')) break;
+
+    const after = line.content === '-' ? '' : line.content.slice(2);
+    if (after === '') {
+      throw new Error(`yaml-mini: empty sequence item at line ${line.n} not supported`);
+    }
+    const [firstKey, firstRest] = splitKeyValue(after, line.n);
+    const item = {};
+    const itemIndent = indent + 2;
+    state.i++;
+    if (firstRest === '|') {
+      item[firstKey] = readBlockScalar(state, itemIndent);
+    } else if (firstRest === '') {
+      skipInactive(state);
+      const next = state.lines[state.i];
+      if (next && next.indent > itemIndent) {
+        item[firstKey] = parseNode(state, itemIndent);
+      } else {
+        item[firstKey] = null;
+      }
+    } else if (firstRest === 'null' || firstRest === '~') {
+      item[firstKey] = null;
+    } else {
+      item[firstKey] = parseScalar(firstRest, line.n);
+    }
+    while (state.i < state.lines.length) {
+      skipInactive(state);
+      if (state.i >= state.lines.length) break;
+      const cont = state.lines[state.i];
+      if (cont.indent <= indent) break;
+      if (cont.content.startsWith('- ') || cont.content === '-') break;
+      if (cont.indent !== itemIndent) {
+        throw new Error(`yaml-mini: inconsistent indent in sequence item at line ${cont.n}`);
+      }
+      const [ck, cv] = splitKeyValue(cont.content, cont.n);
+      state.i++;
+      if (cv === '|') {
+        item[ck] = readBlockScalar(state, itemIndent);
+      } else if (cv === '') {
+        skipInactive(state);
+        const next = state.lines[state.i];
+        if (next && next.indent > itemIndent) {
+          item[ck] = parseNode(state, itemIndent);
+        } else {
+          item[ck] = null;
+        }
+      } else if (cv === 'null' || cv === '~') {
+        item[ck] = null;
+      } else {
+        item[ck] = parseScalar(cv, cont.n);
+      }
+    }
+    out.push(item);
+  }
+  return out;
+}
+
+function splitKeyValue(content, lineNo) {
+  const colon = findUnquotedColon(content);
+  if (colon < 0) {
+    throw new Error(`yaml-mini: expected 'key: value' at line ${lineNo}`);
+  }
+  const keyRaw = content.slice(0, colon).trim();
+  const valueRaw = content.slice(colon + 1).trim();
+  if (keyRaw.length === 0) {
+    throw new Error(`yaml-mini: empty key at line ${lineNo}`);
+  }
+  return [unquoteString(keyRaw, lineNo), valueRaw];
+}
+
+function findUnquotedColon(text) {
+  let inSingle = false;
+  let inDouble = false;
+  for (let k = 0; k < text.length; k++) {
+    const c = text[k];
+    if (c === "'" && !inDouble) inSingle = !inSingle;
+    else if (c === '"' && !inSingle) inDouble = !inDouble;
+    else if (c === ':' && !inSingle && !inDouble) {
+      if (k === text.length - 1 || text[k + 1] === ' ' || text[k + 1] === '\t') return k;
+    }
+  }
+  return -1;
+}
+
+function readBlockScalar(state, parentIndent) {
+  // Default YAML clip chomping: content is preserved, one trailing newline is kept.
+  const collected = [];
+  while (state.i < state.lines.length) {
+    const line = state.lines[state.i];
+    if (line.isBlank) {
+      collected.push(line);
+      state.i++;
+      continue;
+    }
+    if (line.indent > parentIndent) {
+      collected.push(line);
+      state.i++;
+      continue;
+    }
+    break;
+  }
+  while (collected.length && collected[collected.length - 1].isBlank) collected.pop();
+  if (collected.length === 0) return '';
+  const nonBlanks = collected.filter(l => !l.isBlank);
+  if (nonBlanks.length === 0) return '';
+  const baseIndent = Math.min(...nonBlanks.map(l => l.indent));
+  const body = collected.map(l => l.isBlank ? '' : l.raw.slice(baseIndent)).join('\n');
+  return body + '\n';
+}
+
+function parseScalar(text, lineNo) {
+  if (text.length === 0) return '';
+  const first = text[0];
+  if (first === '"' || first === "'") {
+    return unquoteString(text, lineNo);
+  }
+  return text;
+}
+
+function unquoteString(text, lineNo) {
+  if (text.length === 0) return text;
+  const first = text[0];
+  if (first !== '"' && first !== "'") return text;
+  const last = text[text.length - 1];
+  if (last !== first || text.length < 2) {
+    throw new Error(`yaml-mini: unterminated quoted string at line ${lineNo}`);
+  }
+  const inner = text.slice(1, -1);
+  if (first === "'") return inner.replace(/''/g, "'");
+  return inner.replace(/\\(.)/g, (_m, c) => {
+    if (c === 'n') return '\n';
+    if (c === 't') return '\t';
+    if (c === 'r') return '\r';
+    if (c === '\\') return '\\';
+    if (c === '"') return '"';
+    return c;
+  });
+}
+
+module.exports = { parse };

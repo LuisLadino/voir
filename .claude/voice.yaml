@@ -1,0 +1,50 @@
+# Voice registry for this project
+#
+# Controls which voice contract applies to content Claude writes here.
+# Consumed by enforce-voice.cjs (gate on pbcopy/Write/Edit) and
+# voice-identity.cjs (prompt-level reminder).
+#
+# Precedence:
+#   1. VOICE env var (e.g. `VOICE=none echo ... | pbcopy`)
+#   2. paths: first-match-wins against the target file path
+#   3. default
+#   4. hardcoded Luis fallback (if this file is missing or invalid)
+#
+# A voice with `rules: null` means skip enforcement — useful for adversarial
+# prompt drafting, CTF challenges, and other non-Luis-voice content.
+#
+# This file is project-owned. Edit freely. `sync-kit.sh` never overwrites it.
+
+default: luis
+
+voices:
+  luis:
+    rules: |
+      No em dashes. Use periods or colons.
+      No parens. Use a comma, colon, or new sentence.
+      No corporate speak (leverage, synergize, ensure, utilize, passionate).
+      No scaffolding phrases ("Here's what I found:", "Let me explain:").
+      Active voice, short sentences, contractions.
+      Specifics over adjectives. Show, don't tell.
+      Varied sentence length. Mix short and medium.
+      If it sounds like AI wrote it, rewrite it.
+  none:
+    rules: null
+
+# Add a client brand voice when starting paid work:
+#
+# voices:
+#   "client:NAME":
+#     rules: |
+#       Brand voice rules go here.
+#
+# paths:
+#   - match: "content/brand/**"
+#     voice: "client:NAME"
+#
+# Route adversarial paths to `none`:
+#
+# paths:
+#   - match: "prompts/**"
+#     voice: none
+

@@ -3,70 +3,41 @@
 /**
  * Capture Corrections Hook (UserPromptSubmit)
  *
- * Detects when user is correcting Claude and immediately captures to learnings.md.
+ * Detects when user is correcting Claude.
+ * Outputs a reminder so Claude captures the correction as a memory.
  * Runs on every user message, exits 0 (never blocks).
  */
 
-const fs = require('fs');
-const path = require('path');
-
-const HOME = process.env.HOME || process.env.USERPROFILE;
-const LEARNINGS_PATH = path.join(HOME, '.gemini/antigravity/brain/learnings.md');
-
-// Patterns indicating user is correcting Claude
 const CORRECTION_PATTERNS = [
-  // Direct corrections
-  /you('re| are) not (following|doing|applying)/i,
-  /you didn('t|'t| not)/i,
-  /I (told|asked) you to/i,
-  /why (aren't|didn't|haven't) you/i,
-  /that's (wrong|incorrect|not right|not what)/i,
-  /no,? (that|you|it)/i,
+  // Direct corrections about Claude's behavior
+  /you('re| are) not (following|doing|applying|listening)/i,
+  /you didn'?t (follow|do|apply|listen|read|check)/i,
+  /I (told|asked) you (to|not to)/i,
+  /why (aren't|didn't|haven't) you (follow|do|apply|read|check)/i,
+  /that's (wrong|incorrect|not right|not what I asked)/i,
 
   // Methodology/instruction failures
   /you('re| are) not teaching/i,
-  /where('s| is) the tutorship/i,
   /you forgot to/i,
   /you skipped/i,
-  /you missed/i,
+  /you missed the/i,
 
-  // Behavior patterns
-  /stop (guessing|assuming|making up)/i,
-  /you('re| are) (hallucinating|pattern.?matching)/i,
-  /read (the|it) (first|again)/i,
-  /look it up/i,
-  /check (the|your)/i,
+  // Explicit behavior callouts
+  /stop (guessing|assuming|making up|hallucinating)/i,
+  /you('re| are) (hallucinating|pattern.?matching|guessing)/i,
+  /read (the code|the file|it) (first|again|before)/i,
 
-  // Explicit callouts
-  /I('ve| have) (told|corrected|reminded) you/i,
+  // Repeated corrections
+  /I('ve| have) (already )?(told|corrected|reminded) you/i,
   /this is the (second|third|\d+) time/i,
-  /we discussed this/i,
-  /I thought (this|you|we) (had|was|were)/i
+  /we (already )?discussed this/i,
+  /I already (said|told|explained)/i
 ];
 
-async function getInput() {
-  return new Promise((resolve) => {
-    let data = '';
-    process.stdin.on('data', chunk => data += chunk);
-    process.stdin.on('end', () => {
-      try {
-        resolve(JSON.parse(data));
-      } catch (e) {
-        resolve({});
-      }
-    });
-  });
-}
+function handleHook(data) {
+  const message = data?.prompt || data?.message || '';
+  if (!message) process.exit(0);
 
-async function main() {
-  const input = await getInput();
-  const message = input.message || '';
-
-  if (!message) {
-    process.exit(0);
-  }
-
-  // Check for correction patterns
   const matches = [];
   for (const pattern of CORRECTION_PATTERNS) {
     if (pattern.test(message)) {
@@ -74,35 +45,23 @@ async function main() {
     }
   }
 
-  if (matches.length === 0) {
-    process.exit(0);
-  }
+  if (matches.length === 0) process.exit(0);
 
-  // Correction detected - capture to learnings.md
-  const date = new Date().toISOString().split('T')[0];
-  const time = new Date().toISOString().split('T')[1].slice(0, 5);
-
-  // Truncate message for logging (keep it concise)
   const truncatedMessage = message.length > 200
     ? message.slice(0, 200) + '...'
     : message;
 
-  const entry = `
-### [${date} ${time}] (real-time capture)
-- User correction: "${truncatedMessage}"
-- Pattern matched: ${matches[0]}
-- Action: Review and apply this feedback
-`;
+  const reminder = `[CORRECTION DETECTED] The user is correcting you. Save this as a feedback memory so you don't repeat this mistake. User said: "${truncatedMessage}"`;
 
-  try {
-    fs.appendFileSync(LEARNINGS_PATH, entry);
-    console.log(`[CORRECTION CAPTURED] "${truncatedMessage.slice(0, 50)}..."`);
-  } catch (err) {
-    console.error(`[CAPTURE ERROR] ${err.message}`);
-  }
+  console.log(JSON.stringify({
+    hookSpecificOutput: {
+      hookEventName: 'UserPromptSubmit',
+      additionalContext: reminder
+    }
+  }));
 
-  // Always allow - this is tracking, not blocking
   process.exit(0);
 }
 
-main().catch(() => process.exit(0));
+const { runStdinHook } = require('../lib/stdin-hook.cjs');
+runStdinHook(handleHook, { mode: 'observability' });
