@@ -1,10 +1,7 @@
 ---
 name: build
 description: >
-  Build, implement, or create something concrete. Use when: the user says
-  "let's build it", "implement", "code it", "write it", "create it", "make it",
-  "draft it", or when ideation is done and it's time to make something real.
-  This is the commitment point — where thinking becomes tangible.
+  Build, implement, create something concrete. Triggers: "let's build it", "implement", "code it", "make it", "draft it". Commitment point: branch created, issue in-progress, ideation becomes tangible.
 allowed-tools: Read, Grep, Glob, Bash, Edit, Write, Agent, TaskUpdate
 ---
 
@@ -18,10 +15,13 @@ You're entering the PROTOTYPE phase. The goal is to make something concrete — 
 
 ### Set up for the work
 
-If this is code work and you're on main:
+If this is code work:
 ```bash
-# Create branch (this is the commitment point)
-git checkout -b {type}/{issue-number}-short-description
+# Branch from fresh origin/main, not session HEAD. A prior squash-merge can
+# leave the session on an orphaned local branch; branching from there drags
+# stale commits into the new PR and it comes back DIRTY.
+git fetch origin
+git checkout -b {type}/{issue-number}-short-description origin/main
 
 # Mark issue as in progress
 gh issue edit {number} --remove-label "status/backlog" --remove-label "status/ready" --add-label "status/in-progress"

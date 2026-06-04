@@ -1,7 +1,7 @@
 ---
 name: pre-mortem
 description: >
-  Imagine this work failing 3 months from now. What caused it? Trigger on "let's build", "ready to implement", "I'm about to", "commit to this", "locking this in", "ready to ship", or any commitment language before /build. Forces failure-mode enumeration before commitment instead of after.
+  Imagine this work failing 3 months from now. Triggers: "let's build", "ready to implement", "I'm about to", "commit to this", "ready to ship". Failure-mode enumeration before commitment.
 ---
 
 # Pre-Mortem

@@ -1,7 +1,7 @@
 ---
 name: hierarchy-squint
 description: >
-  Squint at the screen and name what reads first, second, third. Trigger on "review the design", "is the hierarchy right", "does this read", "feels flat", "everything looks the same", "visual review", "does this have hierarchy", "what stands out", "is this clear". Forces a one-element-at-a-time read order check instead of assuming hierarchy from intent.
+  Squint, name what reads first, second, third. Triggers: "is the hierarchy right", "does this read", "feels flat", "everything looks the same", "what stands out". One element at a time read order.
 ---
 
 # Hierarchy Squint

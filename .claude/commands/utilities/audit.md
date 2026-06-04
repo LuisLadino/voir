@@ -160,16 +160,17 @@ REVIEW CHECKLIST:
 - Consistency: Are similar things done the same way? Different error handling patterns in different modules? Multiple ways to do the same thing?
 - Scalability concerns: Hardcoded limits, single points of failure, tightly coupled components that can't be independently deployed or tested.
 - Documentation gaps: Are public APIs documented? Are architecture decisions recorded? Does the system map reflect current reality?
-- Spec compliance: Does the code follow the patterns defined in project specs? Check against each relevant spec.
+- Spec compliance (code → spec): Does the code follow the patterns defined in project specs? Check against each relevant spec.
+- Phantom spec entries (spec → code): For each concrete claim a spec makes — a named token, a CSS or Tailwind class, a component, a file path, a config key, an exported function — verify the referenced thing actually exists in code. A spec entry with no backing is a phantom: it does not fail loudly, it silently misleads every future build that trusts the spec. The "code follows spec" check above cannot catch this; only the reverse walk can. Example: a design spec listing a `border-default` class that was never defined as a token, so every usage silently fell back to a default.
 
 SKIP: Philosophical preferences about architecture style. Refactoring suggestions that don't solve a concrete problem.
 
 FORMAT each finding as:
 CONCERN: what's wrong structurally
-FILE(S): affected paths
+FILE(S): affected paths — for a phantom spec entry, the spec file:line making the unbacked claim
 IMPACT: what goes wrong as the project grows or changes
-FIX: specific restructuring recommendation
-SPEC VIOLATION: which spec it violates (if applicable, "none" if not)
+FIX: specific restructuring recommendation — for a phantom entry, remove the claim or implement the missing thing
+SPEC ISSUE: code→spec — which spec the code violates; spec→code — which spec makes a claim with no backing in code; "none" if neither
 
 End with an architecture health summary: strengths and weaknesses.
 ```
@@ -229,8 +230,8 @@ ARCHITECTURE HEALTH:
 Strengths: [what's well-structured]
 Weaknesses: [structural concerns]
 
-SPEC COMPLIANCE:
-[spec name]: [compliant / X violations found]
+SPEC COMPLIANCE (both directions):
+[spec name]: [compliant / X code-violates-spec / X phantom spec entries]
 ...
 
 ===

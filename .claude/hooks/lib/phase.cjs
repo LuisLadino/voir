@@ -39,8 +39,8 @@ const TRANSITION_GUARDS = {
   review_to_commit: 'during_review'
 };
 
-function inferCurrentPhase(workspacePath) {
-  const state = getRecentTrackingState(workspacePath);
+function inferCurrentPhase(workspacePath, sessionId) {
+  const state = getRecentTrackingState(workspacePath, sessionId);
   if (!state) return DEFAULT_PHASE;
 
   // Merge signals from Skill tool events and slash-command events, then

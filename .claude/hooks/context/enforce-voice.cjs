@@ -27,6 +27,7 @@
  */
 
 const crypto = require('crypto');
+const fs = require('fs');
 const path = require('path');
 
 const {
@@ -54,6 +55,23 @@ function isUnderProjectsTree(filePath) {
   return resolved.startsWith(PROJECTS_DIR_RESOLVED + path.sep);
 }
 
+// True when some ancestor of absPath holds a `.claude` directory, i.e. the path
+// lives inside a project tree. Walks the real filesystem rather than
+// resolveProjectRoot, which short-circuits to CLAUDE_PROJECT_DIR and otherwise
+// falls back to the path's own dir (never null), so it cannot tell a scratch
+// target from project content. A `> /tmp/k.txt` redirect has no project
+// ancestor; an in-tree or cross-repo content file does. (#631)
+function hasProjectAncestor(absPath) {
+  let dir = path.dirname(absPath);
+  for (let i = 0; i < 40; i++) {
+    if (fs.existsSync(path.join(dir, '.claude'))) return true;
+    const parent = path.dirname(dir);
+    if (parent === dir) return false;
+    dir = parent;
+  }
+  return false;
+}
+
 const CONTENT_EXTENSIONS = new Set(['.md', '.mdx', '.txt']);
 
 // Paths under these prefixes, or these exact filenames, are Claude-consumed
@@ -79,11 +97,11 @@ function handleHook(data) {
   process.exit(0);
 }
 
-function readerFor(agentId) {
+function readerFor(agentId, sessionId) {
   const isSubagent = typeof agentId === 'string' && agentId.length > 0;
   return () => isSubagent
-    ? getRecentSessionScopedSpecState()
-    : getRecentPromptScopedState();
+    ? getRecentSessionScopedSpecState(undefined, sessionId)
+    : getRecentPromptScopedState(undefined, sessionId);
 }
 
 function hashOf(text) {
@@ -99,12 +117,35 @@ function recordBlock(sessionId, hash) {
   } catch {}
 }
 
+// The clipboard channel fires only when pbcopy is a real command sink, not when
+// the literal token `pbcopy` rides inside an argument. A shell pipe can never
+// live inside quotes, so quoted regions are stripped before the test: a grep
+// alternation `'a\|pbcopy'`, an `echo`/`sed` body, or a `gh issue create`
+// --body that merely shows `| pbcopy` as an example no longer trips the gate.
+// Backslash-escaped pipes (`grep a\|pbcopy`, BRE alternation without quotes)
+// are excluded too. Heuristic, not a shell parser; see voice-context.md. (#640)
+function stripQuotedRegions(command) {
+  return command
+    .replace(/'[^']*'/g, '')
+    .replace(/"(?:\\.|[^"\\])*"/g, '');
+}
+
+function detectsPbcopySink(command) {
+  const unquoted = stripQuotedRegions(command);
+  // Real pipe into pbcopy: a `|` that is not the second bar of `||` and not a
+  // backslash-escaped `\|`.
+  if (/(?:^|[^|\\])\|\s*pbcopy\b/.test(unquoted)) return true;
+  // pbcopy as a leading command, e.g. `pbcopy < draft.txt`.
+  if (/^\s*pbcopy\b/.test(unquoted)) return true;
+  return false;
+}
+
 function handleBash(data) {
   const { tool_input, session_id, agent_id } = data;
   const command = tool_input?.command;
   if (!command) process.exit(0);
 
-  const pbcopyMatch = /(\|\s*pbcopy\b|^\s*pbcopy\b)/.test(command);
+  const pbcopyMatch = detectsPbcopySink(command);
   const redirectMatch = command.match(/>>?\s*["']?([^\s"'|&;]+\.(?:md|mdx|txt))["']?/);
   if (!pbcopyMatch && !redirectMatch) process.exit(0);
 
@@ -114,6 +155,13 @@ function handleBash(data) {
 
   // Auto-memory tree skip for Bash redirects too.
   if (filePathRaw && isUnderProjectsTree(filePathRaw)) process.exit(0);
+
+  // A redirect whose target has no .claude ancestor is a scratch file outside
+  // any project (e.g. `npm run knip > /tmp/k.txt`, `> $TMPDIR/out.txt`), not
+  // content to voice-check. Skip, mirroring the auto-memory skip above. pbcopy
+  // (filePathRaw null) and in-tree / cross-repo content redirects are
+  // unaffected. (#631)
+  if (filePathRaw && !hasProjectAncestor(path.resolve(filePathRaw))) process.exit(0);
 
   // Resolve target repo root from redirect path when present. pbcopy without
   // a redirect falls back to cwd-based resolution, which is correct because
@@ -138,7 +186,7 @@ function handleBash(data) {
 
   const commandWithoutMarker = command.replace(/^\s*VOICE_CHECKED=1\s*/, '').trim();
   const commandHash = hashOf(commandWithoutMarker);
-  const readState = readerFor(agent_id);
+  const readState = readerFor(agent_id, session_id);
 
   if (command.includes('VOICE_CHECKED=1')) {
     const state = readState() || { lastVoiceBlockedHash: null };
@@ -191,7 +239,7 @@ function handleFileWrite(data) {
   if (voice.rules === null) process.exit(0);
 
   const contentHash = hashOf(content);
-  const readState = readerFor(agent_id);
+  const readState = readerFor(agent_id, session_id);
   const state = readState() || { lastVoiceBlockedHash: null };
   const priorHash = state.lastVoiceBlockedHash;
 

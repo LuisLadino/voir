@@ -20,6 +20,8 @@ const fs = require('fs');
 const path = require('path');
 
 const { getSessionId, appendTrackingEvent } = require('../lib/session-utils.cjs');
+const { getSpecRoots } = require('../lib/spec-roots.cjs');
+const { escapeRegex } = require('../lib/regex.cjs');
 
 const STACK_CONFIG_PATH = '.claude/specs/stack-config.yaml';
 
@@ -130,10 +132,16 @@ function parseStackConfigYaml(content) {
 
 function findSpecName(filePath) {
   const config = loadStackConfig();
+  const { kitRoot, projectRoot } = getSpecRoots();
+  const cwd = process.cwd();
+  const kitRel = path.relative(cwd, kitRoot);
+  const projRel = path.relative(cwd, projectRoot);
 
   // Config-aware match: use frontmatter name from stack-config.yaml when present.
   if (config?.specs) {
-    const normalizedPath = filePath.replace(/^.*?\.claude\/specs\//, '');
+    const normalizedPath = filePath
+      .replace(new RegExp('^.*?' + escapeRegex(kitRel) + '/'), '')
+      .replace(new RegExp('^.*?' + escapeRegex(projRel) + '/'), '');
 
     for (const category of Object.keys(config.specs)) {
       const specs = config.specs[category];
@@ -150,9 +158,9 @@ function findSpecName(filePath) {
     }
   }
 
-  // Fallback: any file in the specs directory becomes a generic spec name.
+  // Fallback: any file under either spec root becomes a generic spec name.
   // Runs even when stack-config.yaml is missing (fresh client projects before /sync-stack).
-  if (filePath.includes('.claude/specs/')) {
+  if (filePath.includes(kitRel + '/') || filePath.includes(projRel + '/')) {
     return path.basename(filePath, path.extname(filePath));
   }
 

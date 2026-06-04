@@ -1,10 +1,7 @@
 ---
 name: ideate
 description: >
-  Generate and evaluate approaches before committing to one. Use when: the user
-  says "what are our options", "how should we", "approaches", "ideas", "what if",
-  "alternatives", "brainstorm", or when the problem is defined and it's time to
-  explore solutions.
+  Generate and evaluate approaches before committing. Triggers: "what are our options", "how should we", "approaches", "what if", "alternatives", "brainstorm". Maps options to trade-offs before /build.
 allowed-tools: Read, Grep, Glob, Bash, Agent, WebSearch, WebFetch
 ---
 

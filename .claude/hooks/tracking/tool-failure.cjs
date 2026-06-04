@@ -11,6 +11,7 @@ const {
   getSessionId,
   appendTrackingEvent
 } = require('../lib/session-utils.cjs');
+const { classifyFailure } = require('./classify-failure.cjs');
 
 const { runStdinHook } = require('../lib/stdin-hook.cjs');
 runStdinHook(handleHook, { mode: 'observability' });
@@ -24,6 +25,7 @@ function handleHook(data) {
   const entry = {
     type: 'failure',
     tool: tool_name,
+    failureKind: classifyFailure(tool_name, tool_input),
     error: tool_response?.error || tool_response?.stderr || 'Unknown error'
   };
 
@@ -49,3 +51,4 @@ function handleHook(data) {
   appendTrackingEvent(sessionId, entry);
   process.exit(0);
 }
+

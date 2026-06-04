@@ -1,5 +1,7 @@
 #!/usr/bin/env node
 
+// @kit-internal — required by inject-context.cjs
+
 /**
  * Spec Triggers Module
  *
@@ -19,43 +21,14 @@
 const fs = require('fs');
 const path = require('path');
 
+const { getSpecRoots } = require('../lib/spec-roots.cjs');
 const {
   getRecentTrackingState,
   stripCommandContent,
   logError
 } = require('../lib/session-utils.cjs');
 const { escapeRegex } = require('../lib/regex.cjs');
-
-/**
- * Parse YAML frontmatter from a markdown file (simple parser — no deps)
- * Returns { name, triggers } or null
- */
-function parseFrontmatter(content) {
-  const match = content.match(/^---\s*\n([\s\S]*?)\n---/);
-  if (!match) return null;
-
-  const yaml = match[1];
-  const result = {};
-
-  // Parse name
-  const nameMatch = yaml.match(/^name:\s*(.+)$/m);
-  if (nameMatch) result.name = nameMatch[1].trim().replace(/^["']|["']$/g, '');
-
-  // Parse triggers — supports both inline [a, b] and multi-line list
-  const triggersInline = yaml.match(/^triggers:\s*\[([^\]]+)\]/m);
-  const triggersBlock = yaml.match(/^triggers:\s*\n((?:\s+-\s+.+\n?)+)/m);
-
-  if (triggersInline) {
-    result.triggers = triggersInline[1].split(',').map(t => t.trim().replace(/^["']|["']$/g, ''));
-  } else if (triggersBlock) {
-    result.triggers = triggersBlock[1]
-      .split('\n')
-      .map(line => line.replace(/^\s*-\s*/, '').trim().replace(/^["']|["']$/g, ''))
-      .filter(Boolean);
-  }
-
-  return result.triggers ? result : null;
-}
+const { readSpecFrontmatter } = require('../lib/spec-frontmatter.cjs');
 
 /**
  * Recursively find all .md files in a directory
@@ -90,15 +63,14 @@ function findMarkdownFiles(dir) {
  * Runs once per hook process — no module-level cache needed.
  */
 function buildTriggers() {
-  const specsDir = path.join(process.cwd(), '.claude/specs');
-  const files = findMarkdownFiles(specsDir);
+  const { roots } = getSpecRoots();
+  const files = roots.flatMap(findMarkdownFiles);
   const triggers = [];
 
   for (const filePath of files) {
     try {
-      const content = fs.readFileSync(filePath, 'utf8');
-      const meta = parseFrontmatter(content);
-      if (meta && meta.triggers && meta.triggers.length > 0) {
+      const meta = readSpecFrontmatter(filePath);
+      if (meta && Array.isArray(meta.triggers) && meta.triggers.length > 0) {
         const relPath = path.relative(process.cwd(), filePath);
         triggers.push({
           patterns: meta.triggers.map(t => new RegExp(`\\b${escapeRegex(t)}\\b`, 'i')),
@@ -107,7 +79,7 @@ function buildTriggers() {
         });
       }
     } catch {
-      // Skip unreadable files
+      // One spec whose triggers cannot compile should not drop routing for the rest.
     }
   }
 
@@ -160,8 +132,8 @@ function sanitizeCommand(cmd) {
  * Synthetic-trigger provider: summarize what's happened in the current session.
  * Returns markdown string or null when no tracking data exists.
  */
-function provideSessionChanges() {
-  const state = getRecentTrackingState();
+function provideSessionChanges(sessionId) {
+  const state = getRecentTrackingState(undefined, sessionId);
   if (!state) return null;
 
   const filesCreated = state.filesCreated || [];
@@ -210,9 +182,10 @@ function readSpecFile(filePath) {
 /**
  * Check prompt for spec triggers
  * @param {string} prompt - User's prompt
+ * @param {string} [sessionId] - Active session id from the hook payload (optional)
  * @returns {{ content: string[]|null, specsLoaded: string[] }}
  */
-function check(prompt) {
+function check(prompt, sessionId) {
   const triggers = buildTriggers();
   const contentParts = [];
   const specsLoaded = [];
@@ -224,7 +197,7 @@ function check(prompt) {
     let content = null;
     if (typeof trigger.providerFn === 'function') {
       try {
-        content = trigger.providerFn();
+        content = trigger.providerFn(sessionId);
       } catch (err) {
         logError('spec-triggers', `providerFn "${trigger.label}" threw: ${err.message}`);
         content = null;
@@ -247,7 +220,6 @@ function check(prompt) {
 
 module.exports = {
   buildTriggers,
-  parseFrontmatter,
   readSpecFile,
   check
 };

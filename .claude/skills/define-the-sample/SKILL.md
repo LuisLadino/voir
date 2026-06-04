@@ -1,8 +1,7 @@
 ---
 name: define-the-sample
 description: >
-  Name who and what is in the data before generalizing from it. Trigger on "users like it", "people find", "sessions show", "logs show", "the data covers", "in our data", "from the logs", "looking at sessions", "looking at runs", "general pattern", "most users", "typical session". Forces explicit population, inclusion rules, and who's missing before a claim from a sample gets treated as a claim about the whole.
-
+  Name who is in the data before generalizing. Triggers: "users like it", "most users", "typical session", "general pattern", "in our data". Forces population, inclusion rules, who's missing.
 ---
 
 # Define The Sample

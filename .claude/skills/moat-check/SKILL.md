@@ -1,7 +1,7 @@
 ---
 name: moat-check
 description: >
-  Name the durable advantage before committing to build. Trigger on "is this defensible", "what's our edge", "why us", "competitive advantage", "moat", "why won't someone copy this", "what makes this hard to copy", "durable advantage", "why this will last". Forces an explicit test against Helmer's 7 Powers so "it's clever" stops passing as a reason to build.
+  Name the durable advantage before committing to build. Triggers: "is this defensible", "what's our edge", "competitive advantage", "moat", "won't someone copy this". Tests against Helmer's 7 Powers.
 ---
 
 # Moat Check

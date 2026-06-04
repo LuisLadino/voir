@@ -37,26 +37,25 @@ function test(name, fn) {
 
 const kitRoot = path.resolve(__dirname, '../../..');
 
-const HOOKS_TO_COPY = [
-  'context/enforce-voice.cjs',
-  'lib/voice-registry.cjs',
-  'lib/yaml-mini.cjs',
-  'lib/session-utils.cjs',
-  'lib/project-root.cjs',
-  'lib/stdin-hook.cjs'
-];
-
 function makeDownstreamClone() {
   const rawDir = fs.mkdtempSync(path.join(os.tmpdir(), 'downstream-env-'));
   const dir = fs.realpathSync(rawDir);
   const hooksRoot = path.join(dir, '.claude/hooks');
   fs.mkdirSync(path.join(hooksRoot, 'context'), { recursive: true });
-  fs.mkdirSync(path.join(hooksRoot, 'lib'), { recursive: true });
-  for (const rel of HOOKS_TO_COPY) {
-    const src = path.join(kitRoot, '.claude/hooks', rel);
-    const dst = path.join(hooksRoot, rel);
-    fs.copyFileSync(src, dst);
-  }
+  // Stage enforce-voice plus the ENTIRE lib/ tree. A hand-maintained file list
+  // silently went stale when session-utils started requiring skill-telemetry.cjs,
+  // crashing the hook under test with MODULE_NOT_FOUND (#637). Copying the whole
+  // lib dir mirrors what sync actually ships downstream and can't drift; only
+  // enforce-voice's real require chain executes, so extra lib files sit inert.
+  fs.copyFileSync(
+    path.join(kitRoot, '.claude/hooks/context/enforce-voice.cjs'),
+    path.join(hooksRoot, 'context/enforce-voice.cjs')
+  );
+  fs.cpSync(
+    path.join(kitRoot, '.claude/hooks/lib'),
+    path.join(hooksRoot, 'lib'),
+    { recursive: true }
+  );
   // Sanity: NO node_modules anywhere under the tempdir
   assert.strictEqual(fs.existsSync(path.join(dir, 'node_modules')), false,
     'setup: downstream clone must have no node_modules');

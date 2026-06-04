@@ -1,7 +1,7 @@
 ---
 name: value-over-feature
 description: >
-  Before shipping copy, audit each sentence as feature, attribute, or value, then lead with value. Trigger on "review the copy", "tighten this up", "clean up the bio", "polish the pitch", "is this copy good", "read this over", "edit my draft", "proof this", "ship the post", "one more pass". Forces a per-sentence classification pass so feature-heavy drafts get rewritten value-first instead of shipped as-is.
+  Audit each sentence as feature, attribute, or value; lead with value. Triggers: "review the copy", "is this copy good", "edit my draft", "proof this", "ship the post". Per-sentence classification.
 ---
 
 # Value Over Feature

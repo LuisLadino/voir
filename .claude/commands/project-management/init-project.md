@@ -1,5 +1,5 @@
 ---
-description: Define product requirements before execution. Creates project-brief, architecture decisions, design system. For complex projects needing upfront planning.
+description: Define product requirements before execution. Creates project-brief, architecture decisions, design system, objective + skill map, and project-specific skill stubs. For complex projects needing upfront planning.
 ---
 
 # /init-project
@@ -19,6 +19,10 @@ This command establishes the product vision, architecture decisions, and design 
 │   └── project-structure.md      # Where files go
 └── design/
     └── design-system.md          # Visual decisions (UI projects only)
+
+.claude/skills/{name}/SKILL.md    # Inert stubs for project-specific skills
+.claude/research/skill-trigger-evals/{name}.md  # Matching golden eval stubs
+CLAUDE.md                         # Root file: objective + skill map section
 ```
 
 Also creates `README.md` if it doesn't exist.
@@ -303,7 +307,7 @@ category: design
 [Describe transition approach]
 ```
 
-Add the design spec to stack-config.yaml (created in Step 5.5 below):
+Add the design spec to stack-config.yaml (created in Step 6.5 below):
 
 ```yaml
   design:
@@ -524,11 +528,116 @@ tests/              # Test files
 ```
 
 
-## STEP 5: Generate Outputs
+## STEP 5: Project Objective and Skill Map
 
-### 5.1 Project Brief
+**Declare what this project produces and which skills it needs, per the #179 project-skill-system framework.** Generic kit skills cover generic work. Project-specific skills cover project-specific work. This step names the objective, decomposes the recurring work, and identifies which work types earn their own skills. Steps 6.6 and 6.7 write the results.
 
-Generate `.claude/specs/project-brief.md`:
+### 5.1 Project Objective
+
+One sentence, verb-first. What does this project produce?
+
+- Good: "Produce attack-pattern analyses and vulnerability reports for AI-safety engagements."
+- Good: "Redesign ignitegaming.com for conversion and mobile UX."
+- Weak: "A red-teaming project." That names a topic, not an output.
+
+### 5.2 Tenancy Check (framework Step 0)
+
+Ask: does this project serve one tenant or many?
+
+- **Single-tenant** — one client, one product, sole maintainer. Skip to 5.3. This is the common case.
+- **Multi-tenant** — N clients, venues, or workspaces, each with its own config. Run Workflow Discovery first: map the shared workflow before decomposing work types, because per-tenant variation changes which work needs skills. Record N and the shared-vs-per-tenant split. Per the framework, per-tenant primitives are conditional on N: documented at N=1, load-bearing at N≥2, mandatory automation at N≥5.
+
+### 5.3 Recurring Work Types
+
+What does success look like day to day? List the recurring work. A red-team project: research attack patterns, draft attack prompts, run a harness, write vulnerability reports, maintain payload libraries. A web redesign: capture brand voice, set design direction, migrate content, decide Payload-or-not.
+
+### 5.4 Which Work Types Need Skills
+
+Triage each work type:
+
+- **Covered by generic kit skills** — research, define, ideate, build, test, review, commit, plan, handoff. No new skill. Most workflow work lands here.
+- **Needs a project-specific skill** — the work is domain-specific and recurs. It earns a skill.
+- **Needs a spec or hook instead** — the work is a rule to enforce, not a workflow to run. Note it for `/sync-stack --custom`.
+
+### 5.5 Group Into the Skill Map
+
+Group the project-specific skills into single-purpose plugins, 2-8 components each. A plugin is a **purpose grouping, not a directory**: the skills live flat in `.claude/skills/{name}/SKILL.md`, where Claude Code discovers them, and the grouping is documented in CLAUDE.md. Name each plugin, its one-sentence purpose, and its components.
+
+This skill map is written into CLAUDE.md in Step 6.6 and scaffolded into `.claude/skills/` in Step 6.7.
+
+
+## STEP 6: Generate Outputs
+
+### 6.0 Resolve Project Specs Root
+
+Before writing any project spec, resolve where project specs live for this project. Kit-owned specs always stay under `.claude/specs/`; curated project specs go to `project_specs_root`.
+
+```bash
+# Read .claude/specs.yaml if it exists
+PROJECT_SPECS_ROOT=$(grep -E '^project_specs_root:' .claude/specs.yaml 2>/dev/null | sed -E 's/^project_specs_root:[[:space:]]*"?([^"]+)"?[[:space:]]*$/\1/')
+
+# If unset, pick default based on mode
+if [ -z "$PROJECT_SPECS_ROOT" ]; then
+  if grep -q '^mode: client' .claude/kit-mode.yaml 2>/dev/null; then
+    PROJECT_SPECS_ROOT="docs/specs"
+  else
+    PROJECT_SPECS_ROOT=".claude/specs"
+  fi
+fi
+```
+
+In **client mode**, also write the config file so future runs are deterministic:
+
+```bash
+if grep -q '^mode: client' .claude/kit-mode.yaml 2>/dev/null && [ ! -f .claude/specs.yaml ]; then
+  cat > .claude/specs.yaml <<EOF
+# Claude Kit Spec Locations
+#
+# project_specs_root: where curated project specs live (committed to the project repo).
+# Kit-owned specs always live under .claude/specs/ regardless of this setting.
+# See .claude/specs/kit/client-mode.md for the rationale.
+
+project_specs_root: docs/specs
+EOF
+fi
+```
+
+Then create the README in the target root:
+
+```bash
+mkdir -p "$PROJECT_SPECS_ROOT"
+if [ ! -f "$PROJECT_SPECS_ROOT/README.md" ]; then
+  cat > "$PROJECT_SPECS_ROOT/README.md" <<'EOF'
+# Project Specs
+
+This directory contains curated specifications for this project: architecture
+decisions, design system, structural conventions, and component patterns.
+
+These files are read by Claude Code agents before editing related code (via the
+enforce-specs hook). Keep them up to date when you change code they describe.
+
+The kit's own infrastructure (hooks, skills, commands, agents, kit-owned specs)
+lives under `.claude/`. That directory is excluded from this repo's commits.
+
+Layout:
+- architecture/  — ADRs, project structure, system map
+- design/        — Design system, design direction
+- config/        — Git, testing, deployment, environment
+- coding/        — Generated stack-specific patterns
+- components/    — Component-scoped specs
+- project-brief.md — What this project is and why
+
+This file and its siblings are part of the project, not Claude tooling. Edit
+them like normal documentation.
+EOF
+fi
+```
+
+Every `.claude/specs/...` write path in 6.1-6.4 below is relative to `$PROJECT_SPECS_ROOT/`. Stack-config itself (6.5) stays at `.claude/specs/stack-config.yaml`, and the `file:` paths it generates are project-root-relative (`docs/specs/architecture/decisions.md`, not `architecture/decisions.md`).
+
+### 6.1 Project Brief
+
+Generate `$PROJECT_SPECS_ROOT/project-brief.md`:
 
 ```markdown
 # [Project Name]
@@ -549,9 +658,9 @@ Generate `.claude/specs/project-brief.md`:
 [From Step 3]
 ```
 
-### 5.2 Architecture Decisions
+### 6.2 Architecture Decisions
 
-Generate `.claude/specs/architecture/decisions.md`:
+Generate `$PROJECT_SPECS_ROOT/architecture/decisions.md`:
 
 ```markdown
 # Architecture Decisions
@@ -578,15 +687,15 @@ Generate `.claude/specs/architecture/decisions.md`:
 [Continue for each decision from 2.3]
 ```
 
-### 5.3 Project Structure
+### 6.3 Project Structure
 
-Generate `.claude/specs/architecture/project-structure.md` based on solution type (use templates below).
+Generate `$PROJECT_SPECS_ROOT/architecture/project-structure.md` based on solution type (use templates below).
 
-### 5.4 Design System (UI projects)
+### 6.4 Design System (UI projects)
 
-Generate `.claude/specs/design/design-system.md` (see Step 4 output format).
+Generate `$PROJECT_SPECS_ROOT/design/design-system.md` (see Step 4 output format).
 
-### 5.5 Create or update stack-config.yaml
+### 6.5 Create or update stack-config.yaml
 
 If `.claude/specs/stack-config.yaml` doesn't exist yet, create it. If it exists, add the new specs.
 
@@ -676,6 +785,81 @@ specs:
 
 This gives `/sync-stack` a foundation to build on. It will add `stack:` details, `coding:` specs, `config:` specs, and `applies_to` patterns.
 
+### 6.6 Write the Objective and Skill Map
+
+Write the objective from 5.1 and the skill map from 5.5 into the project's **root `CLAUDE.md`**, not `.claude/CLAUDE.md`. The root file is project-owned and survives `sync-kit`. `.claude/CLAUDE.md` is the kit-synced template and gets overwritten on every sync, so a skill map written there is lost. Create root `CLAUDE.md` if it doesn't exist.
+
+Use the format documented in the "Project Objective and Skill Map" section of `.claude/CLAUDE.md`:
+
+```markdown
+## Project Objective and Skill Map
+
+### Objective
+
+[One verb-first sentence from 5.1.]
+
+### Skill map
+
+[For multi-tenant projects, note N and the shared-vs-per-tenant split from 5.2 first.]
+
+- `plugin-name`. One-sentence purpose. Components: skill-a, skill-b, hook-c.
+- `another-plugin`. One-sentence purpose. Components: skill-d, spec-e.
+```
+
+List only project-specific plugins from 5.5. Generic kit skills are already documented in `.claude/CLAUDE.md`. Don't restate them.
+
+### 6.7 Scaffold Project-Specific Skill Stubs
+
+For each project-specific skill from 5.4, scaffold a stub at `.claude/skills/{skill-name}/SKILL.md`. That path is where Claude Code discovers project skills, alongside synced kit skills. Project-custom skills are absent from `.kit-manifest`, so `sync-kit` never touches them.
+
+A stub is inert until it clears the skill-authorship gate in `.claude/specs/kit/skills.md`. Ship it with `disable-model-invocation: true` so its placeholder description stays out of the routing budget, plus a checklist the user works through.
+
+Stub template:
+
+````markdown
+---
+name: {skill-name}
+description: TODO — write a ≤200-byte description per .claude/specs/kit/skills.md, then remove disable-model-invocation. Action cue. Triggers: "phrase", "phrase". Outcome line.
+disable-model-invocation: true
+---
+
+# {Skill Title}
+
+> STUB scaffolded by /init-project for the `{plugin-name}` plugin. Not live yet.
+
+**Purpose:** {one sentence from 5.5}
+
+## Before this skill goes live (skills.md gate)
+
+- [ ] Write the role and task instructions below.
+- [ ] Write a ≤200-byte, three-part description: action cue, 3-6 trigger phrases, outcome line.
+- [ ] Confirm no trigger-phrase overlap with existing skills. Document the overlap analysis.
+- [ ] Add a golden eval at `.claude/research/skill-trigger-evals/{skill-name}.md`: 3-5 should-fire, 3-5 should-not-fire.
+- [ ] Remove `disable-model-invocation: true`.
+- [ ] Walk the eval set in a clean session. Every should-fire fires, no should-not-fire fires.
+
+## Instructions
+
+TODO — what this skill does, step by step.
+````
+
+Scaffold the matching golden eval stub at `.claude/research/skill-trigger-evals/{skill-name}.md`:
+
+````markdown
+# {skill-name} trigger eval
+
+## Should fire
+- TODO
+
+## Should not fire
+- TODO
+
+## Owns triggers
+- TODO
+````
+
+Tell the user which stubs were created and that each must clear the skills.md gate before it fires.
+
 
 ## After This
 
@@ -684,3 +868,5 @@ Run `/sync-stack` to:
 2. Wire configs together properly
 3. Generate coding specs from official docs
 4. Create system map showing how everything connects
+
+Then flesh out each skill stub from 6.7. Each one is inert until it clears the gate in `.claude/specs/kit/skills.md`: a ≤200-byte description, a golden eval, and the `disable-model-invocation` flag removed.

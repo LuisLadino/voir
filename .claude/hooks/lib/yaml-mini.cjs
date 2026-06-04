@@ -3,20 +3,27 @@
 /**
  * Minimal YAML subset parser for kit config files.
  *
- * Zero runtime deps. Hand-rolled to the schema used by .claude/voice.yaml:
+ * Zero runtime deps. Hand-rolled to the schema used by .claude/voice.yaml
+ * and spec frontmatter under .claude/specs/. Supports:
  *
  *   - Top-level map with string keys
  *   - String scalars: plain, single-quoted, double-quoted
  *   - null literal (unquoted `null`, lowercase, or `~`)
- *   - Block scalars with `|` (literal, newlines preserved)
+ *   - Block scalars with `|` (literal, newlines preserved) and `>` (folded,
+ *     newlines collapsed to spaces; blank lines preserved as paragraph breaks)
  *   - Nested maps (arbitrary depth)
  *   - Sequences of maps (`- key: value` with continuation lines)
+ *   - Sequences of scalars (`- "value"` or `- value`); items in one sequence
+ *     can mix scalars and maps when each item carries its own type.
+ *   - Single-line flow sequences of scalars (`[a, b]`, `[]`); quote-aware
+ *     comma split, each item unquoted like any scalar. Covers spec frontmatter
+ *     `triggers`, `related`, and empty `applies_to: []`.
  *   - Comments via `#` (line-only or after whitespace on unquoted lines)
  *
  * Explicitly NOT supported:
  *   - Anchors (&, *), tags (!!)
- *   - Flow style [a, b] or {k: v}
- *   - Folded block scalars (>), chomping modifiers (|-, |+, >-, >+)
+ *   - Flow-style maps {k: v}; multi-line flow sequences
+ *   - Chomping modifiers (|-, |+, >-, >+); clip is the only chomping mode
  *   - Numeric/boolean auto-conversion (all non-null scalars return as string)
  *   - Explicit indent indicators
  *
@@ -111,7 +118,9 @@ function parseMap(state, indent) {
     const [key, rest] = splitKeyValue(line.content, line.n);
     state.i++;
     if (rest === '|') {
-      out[key] = readBlockScalar(state, indent);
+      out[key] = readBlockScalar(state, indent, 'literal');
+    } else if (rest === '>') {
+      out[key] = readBlockScalar(state, indent, 'folded');
     } else if (rest === '') {
       skipInactive(state);
       const next = state.lines[state.i];
@@ -145,12 +154,23 @@ function parseSequence(state, indent) {
     if (after === '') {
       throw new Error(`yaml-mini: empty sequence item at line ${line.n} not supported`);
     }
+    if (findUnquotedColon(after) < 0) {
+      state.i++;
+      if (after === 'null' || after === '~') {
+        out.push(null);
+      } else {
+        out.push(parseScalar(after, line.n));
+      }
+      continue;
+    }
     const [firstKey, firstRest] = splitKeyValue(after, line.n);
     const item = {};
     const itemIndent = indent + 2;
     state.i++;
     if (firstRest === '|') {
-      item[firstKey] = readBlockScalar(state, itemIndent);
+      item[firstKey] = readBlockScalar(state, itemIndent, 'literal');
+    } else if (firstRest === '>') {
+      item[firstKey] = readBlockScalar(state, itemIndent, 'folded');
     } else if (firstRest === '') {
       skipInactive(state);
       const next = state.lines[state.i];
@@ -176,7 +196,9 @@ function parseSequence(state, indent) {
       const [ck, cv] = splitKeyValue(cont.content, cont.n);
       state.i++;
       if (cv === '|') {
-        item[ck] = readBlockScalar(state, itemIndent);
+        item[ck] = readBlockScalar(state, itemIndent, 'literal');
+      } else if (cv === '>') {
+        item[ck] = readBlockScalar(state, itemIndent, 'folded');
       } else if (cv === '') {
         skipInactive(state);
         const next = state.lines[state.i];
@@ -223,8 +245,11 @@ function findUnquotedColon(text) {
   return -1;
 }
 
-function readBlockScalar(state, parentIndent) {
+function readBlockScalar(state, parentIndent, style) {
   // Default YAML clip chomping: content is preserved, one trailing newline is kept.
+  // style === 'literal' (|) keeps newlines verbatim. 'folded' (>) collapses
+  // newlines between non-blank lines to single spaces; blank lines stay as
+  // paragraph breaks (single newline in output).
   const collected = [];
   while (state.i < state.lines.length) {
     const line = state.lines[state.i];
@@ -245,6 +270,22 @@ function readBlockScalar(state, parentIndent) {
   const nonBlanks = collected.filter(l => !l.isBlank);
   if (nonBlanks.length === 0) return '';
   const baseIndent = Math.min(...nonBlanks.map(l => l.indent));
+  if (style === 'folded') {
+    let out = '';
+    let prevBlank = false;
+    for (let i = 0; i < collected.length; i++) {
+      const l = collected[i];
+      if (l.isBlank) {
+        out += '\n';
+        prevBlank = true;
+        continue;
+      }
+      if (out.length > 0 && !prevBlank) out += ' ';
+      out += l.raw.slice(baseIndent);
+      prevBlank = false;
+    }
+    return out + '\n';
+  }
   const body = collected.map(l => l.isBlank ? '' : l.raw.slice(baseIndent)).join('\n');
   return body + '\n';
 }
@@ -255,7 +296,51 @@ function parseScalar(text, lineNo) {
   if (first === '"' || first === "'") {
     return unquoteString(text, lineNo);
   }
+  // Single-line flow sequence: an unquoted value that opens '[' and closes ']'
+  // is a sequence in YAML, never a plain scalar. A literal "[x]" string must
+  // be quoted, which is handled by the quote branch above.
+  if (first === '[' && text[text.length - 1] === ']') {
+    return parseFlowSequence(text, lineNo);
+  }
   return text;
+}
+
+function parseFlowSequence(text, lineNo) {
+  const inner = text.slice(1, -1).trim();
+  if (inner.length === 0) return [];
+  return splitFlowItems(inner)
+    .map(item => item.trim())
+    .filter(item => item.length > 0)
+    .map(item => {
+      if (item === 'null' || item === '~') return null;
+      return parseScalar(item, lineNo);
+    });
+}
+
+// Split on top-level commas, honoring single/double quotes so a quoted item
+// can contain a comma. Bracket depth is tracked so a nested flow value stays
+// in one item (nested flow itself is then parsed by the recursive parseScalar).
+function splitFlowItems(text) {
+  const items = [];
+  let inSingle = false;
+  let inDouble = false;
+  let depth = 0;
+  let start = 0;
+  for (let k = 0; k < text.length; k++) {
+    const c = text[k];
+    if (c === "'" && !inDouble) inSingle = !inSingle;
+    else if (c === '"' && !inSingle) inDouble = !inDouble;
+    else if (!inSingle && !inDouble) {
+      if (c === '[') depth++;
+      else if (c === ']') depth--;
+      else if (c === ',' && depth === 0) {
+        items.push(text.slice(start, k));
+        start = k + 1;
+      }
+    }
+  }
+  items.push(text.slice(start));
+  return items;
 }
 
 function unquoteString(text, lineNo) {

@@ -1,7 +1,7 @@
 ---
 name: competitive-alternatives
 description: >
-  Before writing a pitch, bio, cover letter, or product framing, list the true competitive alternatives and what's unique against them. Trigger on "position this", "how do i pitch", "write my bio", "cover letter", "landing page copy", "describe the product", "what makes this different", "unique value", "pitch the kit". Forces naming what the reader would do INSTEAD before any claim of value, instead of starting from self-description.
+  List true competitive alternatives before pitching. Triggers: "position this", "how do I pitch", "landing page copy", "what makes this different", "unique value". Names what reader would do INSTEAD.
 ---
 
 # Competitive Alternatives

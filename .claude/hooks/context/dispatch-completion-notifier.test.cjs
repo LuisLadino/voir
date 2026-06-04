@@ -13,6 +13,7 @@ const {
   hasResultEvent,
   alreadySynthesized,
 } = require('./dispatch-completion-notifier.cjs');
+const registry = require('../lib/dispatch-registry.cjs');
 
 let passed = 0;
 let failed = 0;
@@ -37,8 +38,7 @@ function mkTempRoot() {
 }
 
 function writeActive(root, workers) {
-  const activePath = path.join(root, '.claude', 'dispatch', 'active.json');
-  fs.writeFileSync(activePath, JSON.stringify({ workers }, null, 2));
+  registry.resetAndSeed(root, workers);
 }
 
 function writeJsonl(root, sessionId, lines) {
@@ -166,10 +166,10 @@ test('finds multiple unsynthesized workers', () => {
   assert.deepStrictEqual(pending.map(p => p.sessionId).sort(), ['abc', 'def']);
 });
 
-test('handles malformed active.json gracefully', () => {
+test('handles malformed active.jsonl gracefully', () => {
   const root = mkTempRoot();
-  const activePath = path.join(root, '.claude', 'dispatch', 'active.json');
-  fs.writeFileSync(activePath, '{ not valid json');
+  const jsonlPath = path.join(root, '.claude', 'dispatch', 'active.jsonl');
+  fs.writeFileSync(jsonlPath, '{ not valid json');
   assert.deepStrictEqual(findUnsynthesized(root), []);
 });
 

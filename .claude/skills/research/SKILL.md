@@ -1,10 +1,7 @@
 ---
 name: research
 description: >
-  Research and understand a problem before solving it. Use when: the user mentions
-  an issue number, says "let's work on", "look into", "what's going on with",
-  "research", "investigate", "explore", or indicates they want to understand
-  something before acting. This is the entry point to substantive work.
+  Research a problem before solving. Triggers: "let's research", "look into", "investigate", "explore", "what's going on with", "let's work on". Entry point; gathers context before /define.
 allowed-tools: Read, Grep, Glob, Bash, Agent, WebSearch, WebFetch
 ---
 

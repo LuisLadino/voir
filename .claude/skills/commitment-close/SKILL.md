@@ -1,7 +1,7 @@
 ---
 name: commitment-close
 description: >
-  Close every decision discussion with explicit what, who, when, and how-we-know. Trigger on "so we decided", "I think we're going to", "alright, we're doing", "moving forward with", "makes sense, let's", "we agreed", or any language that implies a decision was reached without being written down. Forces closure so decisions don't evaporate between the conversation and the work.
+  Close every decision with what, who, when, how-we-know. Triggers: "so we decided", "moving forward with", "we agreed", "makes sense, let's". Written closure so decisions don't evaporate.
 ---
 
 # Commitment Close

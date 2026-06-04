@@ -1,7 +1,7 @@
 ---
 name: strategy-kernel
 description: >
-  Force a Rumelt-style diagnosis, guiding policy, and coherent actions before committing to a plan. Trigger on "what's the strategy", "our strategy", "strategic approach", "how do we approach this", "plan of attack", "what's the play", "long-term plan", "strategy for this", "what's our angle". Replaces goal-lists with a tested three-part kernel.
+  Force Rumelt diagnosis, guiding policy, coherent actions. Triggers: "what's the strategy", "our strategy", "strategic approach", "plan of attack", "long-term plan". Three-part kernel, not goal-lists.
 ---
 
 # Strategy Kernel

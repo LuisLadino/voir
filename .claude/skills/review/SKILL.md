@@ -1,11 +1,7 @@
 ---
 name: review
 description: >
-  Pre-commit code review using parallel agents. Use when: the user says
-  "review this", "review the changes", "check the code", "code review",
-  "review before commit", or when work is done and needs quality verification
-  before committing. Focused on the diff, not the whole codebase.
-  For full codebase audits, use /audit instead.
+  Pre-commit code review using parallel agents. Triggers: "review this", "review the changes", "check the code", "code review", "review before commit". Focused on the diff. Full audits use /audit.
 allowed-tools: Read, Bash, Grep, Glob, Agent
 ---
 
@@ -149,6 +145,8 @@ Check for:
 - Test coverage gaps for new logic
 - Documentation gaps for public APIs
 
+**Spec-conformance pass.** For each spec whose `applies_to` matches a file in this diff, walk the diff against the documented rules in the spec prose. Editing a line puts EVERY token on that line in scope for conformance, not just the part the change intended. Drift inherited unchanged from adjacent existing code is still drift. The `check-spec-conformance` hook handles regex-decidable rules at commit time; this reviewer covers the judgment-based rules a regex can't decide.
+
 SKIP:
 - style preferences not in specs, minor formatting, comments on obvious code
 - rules from `.claude/specs/design/craft.md` — the Design Polish agent covers visual/craft concerns (correctness, anti-slop, color, typography, layout, motion) when UI files are in the diff. Duplicating these findings across both reviewers forces the orchestrator to dedup by file:line and makes reviewers look like they hallucinate duplicates. Leave craft.md to Design Polish.
@@ -196,7 +194,7 @@ Read before starting:
 - .claude/specs/design/design-system.md — project design system (if it exists; treat as authoritative)
 
 Check against:
-- correctness rules in craft.md (a11y, prefers-reduced-motion, hover gating, hardware-accelerated properties, focus states, WCAG contrast, semantic HTML) — always blocking
+- correctness rules in craft.md (a11y, prefers-reduced-motion, hover gating, hardware-accelerated properties, focus states, WCAG contrast, semantic HTML, RSC safety / `"use client"` directive on Next.js client components) — always blocking
 - anti-slop patterns (side-stripe borders, gradient text, glassmorphism everywhere, 3-column card rows, hero metric template, emoji as icons, default shadcn) — always check
 - color / typography / layout / motion rules — apply when the diff touches that domain
 - project direction or design-system — wins over craft floor where rules conflict
@@ -213,16 +211,18 @@ SEVERITY: high or medium, using this mapping:
   - motion safety: missing `prefers-reduced-motion` guard, scroll-triggered animation that moves content for users who haven't opted in
   - performance correctness: `transition: all`, animating non-composited properties (top/left vs transform), layout thrash patterns
   - touch/hover gating: hover-only affordance on touch devices, missing `@media (hover: hover)` guard
+  - framework correctness (Next.js RSC): a `.tsx` or `.jsx` file uses client hooks like `useState`, `useEffect`, `useMotionValue`, `IntersectionObserver`, or event-handler props like `onClick`, `onChange`, `onSubmit`, but is missing `"use client"` on line 1. Scan the body for these patterns. If any are present and line 1 is not `"use client"`, flag HIGH at `path:1`.
   - direction.md or design-system.md rule violation (project specs always beat craft floor)
+  - anti-slop Visual tells from craft.md — side-stripe borders over 1px, gradient text via `background-clip: text`, glassmorphism on non-layered surfaces, default dark mode with glowing accents, default purple/blue/cyan AI palette. These are structural AI signatures, not craft preferences. craft.md says "Match and refuse."
 
 - `medium` — craft-floor suggestions where correctness is not at stake:
   - color: pure black / pure white where off-shade is specified, hardcoded hex instead of token
   - typography: line-height, line-length, tracking outside the craft-floor ranges
   - layout craft: asymmetry, density, grid-system consistency that doesn't affect usability
   - motion craft: duration/easing choices within the "reasonable" band
-  - anti-slop patterns that don't block accessibility: 3-column card rows, hero metric template, emoji as icons
+  - anti-slop Layout, Content, and Component tells from craft.md — 3-column card rows, hero metric template, centered hero over dark image, emoji as icons, generic fake names ("John Doe"), filler verbs ("Elevate", "Seamless"), default shadcn. Visual tells are HIGH (see above).
 
-A color-ban finding is medium unless the ban exists because of contrast (then high). A motion finding is medium unless it violates reduced-motion (then high). Err toward medium when in doubt — Step 4 will re-sort after dedup.
+A color-ban finding is medium unless the ban exists because of contrast (then high). A motion finding is medium unless it violates reduced-motion (then high). For craft-floor findings (color, typography, layout craft, motion craft), err toward medium when in doubt. Anti-slop Visual tells are the opposite: if a pattern matches craft.md's "Anti-slop > Visual tells" subsection, rate HIGH. Step 4 will re-sort after dedup.
 
 Within `medium`, order findings by user-visible impact so the top of the list is what a user would actually notice. Split into two tiers and list UX-blocking craft first:
 

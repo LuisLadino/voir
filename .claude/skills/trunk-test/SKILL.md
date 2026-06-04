@@ -1,7 +1,7 @@
 ---
 name: trunk-test
 description: >
-  Drop into the surface cold, with no context, and see if you can orient. Trigger on "does this make sense", "is this clear", "can someone use this", "first-time user", "new to this", "pretend you don't know", "cold read", "six months from now", "fresh eyes". Steve Krug's trunk test for solo kit work, where the cold user is always Luis six months from now.
+  Drop into the surface cold and see if you orient. Triggers: "does this make sense", "is this oriented", "first-time user", "cold read", "fresh eyes". Krug's test; cold user is Luis six months later.
 ---
 
 # Trunk Test

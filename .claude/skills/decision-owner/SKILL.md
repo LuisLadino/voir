@@ -1,7 +1,7 @@
 ---
 name: decision-owner
 description: >
-  Name the decision owner before debating options. Trigger on "we need to decide", "what should we do", "which approach", "let's figure out", "should I", "who decides", or any framing where multiple paths are on the table and the owner is unstated. Forces explicit decision ownership so debate doesn't drift into consensus-by-default.
+  Name the decision owner before debating options. Triggers: "we need to decide", "what should we do", "which approach", "let's figure out", "who decides". Stops drift into consensus-by-default.
 ---
 
 # Decision Owner

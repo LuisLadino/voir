@@ -1,7 +1,7 @@
 ---
 name: symptom-vs-root
 description: >
-  Separate the symptom from the root cause before fixing. Trigger on "something's off", "this keeps happening", "weird behavior", "not sure why", "intermittent", "flaky", "happens sometimes", "recurring", "still broken", "still happening". Forces a short causal chain before patching so the fix targets the cause the system is producing, not the surface Luis noticed.
+  Separate symptom from root cause before fixing. Triggers: "something's off", "this keeps happening", "weird behavior", "intermittent", "flaky", "still broken". Causal chain so fix targets the cause.
 ---
 
 # Symptom vs Root

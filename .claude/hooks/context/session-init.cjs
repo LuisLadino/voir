@@ -147,6 +147,40 @@ function cleanupLegacySessionState() {
   } catch (e) {}
 }
 
+function writeSessionMarker(cwd, sessionId) {
+  if (!sessionId) return;
+  try {
+    const sessionsDir = path.join(cwd, '.claude/sessions');
+    fs.mkdirSync(sessionsDir, { recursive: true });
+    const marker = {
+      session_id: sessionId,
+      pid: process.ppid || process.pid,
+      cwd,
+      started_at: new Date().toISOString()
+    };
+    fs.writeFileSync(
+      path.join(sessionsDir, `${sessionId}.json`),
+      JSON.stringify(marker, null, 2)
+    );
+  } catch {}
+}
+
+function recordStartingBranch(cwd, sessionId) {
+  if (!sessionId) return;
+  try {
+    const { execSync } = require('child_process');
+    const branch = execSync('git rev-parse --abbrev-ref HEAD', {
+      cwd, encoding: 'utf8', stdio: ['pipe', 'pipe', 'pipe']
+    }).trim();
+    if (!branch) return;
+    const { appendTrackingEvent } = require('../lib/session-utils.cjs');
+    appendTrackingEvent(sessionId, {
+      type: 'session_branch_baseline',
+      branch
+    }, cwd);
+  } catch {}
+}
+
 const { runStdinHook } = require('../lib/stdin-hook.cjs');
 runStdinHook(handleHook, { mode: 'observability' });
 
@@ -158,6 +192,8 @@ function handleHook(data) {
   if (source === 'startup' || source === 'clear') {
     initSession(cwd);
     cleanupOldSessions(cwd);
+    writeSessionMarker(cwd, data.session_id);
+    recordStartingBranch(cwd, data.session_id);
   }
 
   // Project-specific work — only run inside a framework project

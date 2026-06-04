@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 // Tests the attribution scanner against the golden set from issue #162.
-// Golden set is documented at .claude/research/issue-162-attribution-scan-eval.md.
+// Golden set is documented at .claude/research/kit/issue-162-attribution-scan-eval.md.
 
 const { scan } = require('./scan-attribution.cjs');
 

@@ -1,10 +1,7 @@
 ---
 name: test
 description: >
-  Verify work against the definition of done. Use when: the user says "does it
-  work", "verify", "check", "test it", "evaluate", or when building is done
-  and it's time to validate. Also triggers iteration — if tests reveal
-  problems, go back to the right phase. NOT for code review — use /review.
+  Verify work against Definition of Done. Triggers: "does it work", "test it", "evaluate", "check", or when /build is done. Iterates back to the right phase if tests reveal problems. Not code review.
 allowed-tools: Read, Grep, Glob, Bash, Agent
 ---
 

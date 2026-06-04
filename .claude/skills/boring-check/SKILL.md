@@ -1,7 +1,7 @@
 ---
 name: boring-check
 description: >
-  Check whether a proposed library, framework, or pattern is worth an innovation token before adopting it. Trigger on "let's use", "we could use", "add a library", "pull in", "install", "new dependency", "switch to", "migrate to", "rewrite in", "use a framework". Forces explicit trade-off analysis against the boring alternative instead of defaulting to the clever choice.
+  Is the library worth an innovation token. Triggers: "let's use", "add a library", "install", "new dependency", "switch to", "migrate to". Trade-off analysis against the boring alternative.
 ---
 
 # Boring Check

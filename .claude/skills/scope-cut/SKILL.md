@@ -1,7 +1,7 @@
 ---
 name: scope-cut
 description: >
-  Decide what NOT to build. Trigger on "what should we cut", "too much to ship", "defer this", "is this worth building", "what do we drop", "kill this feature", "trim scope", or when reviewing a backlog full of priority/high and the instinct is yes-to-everything. Surfaces the highest-leverage cut, not a ranked list.
+  Decide what NOT to build. Triggers: "what should we cut", "too much to ship", "defer this", "what do we drop", "kill this feature", "trim scope". Surfaces highest-leverage cut, not a ranked list.
 ---
 
 # Scope Cut

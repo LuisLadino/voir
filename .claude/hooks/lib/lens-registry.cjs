@@ -22,17 +22,13 @@ const fs = require('fs');
 const path = require('path');
 
 const { logError } = require('./session-utils.cjs');
+const { resolveProjectRoot: baseResolveProjectRoot } = require('./project-root.cjs');
 
+// lens-registry consumers (lens-router.cjs, phase-menu.cjs) assume a non-null
+// return and build paths via `path.join(root, ...)`. Opting out of the
+// symlink guard preserves that contract. See #246's decisions_needing_review.
 function resolveProjectRoot() {
-  if (process.env.CLAUDE_PROJECT_DIR) return process.env.CLAUDE_PROJECT_DIR;
-  let dir = process.cwd();
-  for (let i = 0; i < 10; i++) {
-    if (fs.existsSync(path.join(dir, '.claude'))) return dir;
-    const parent = path.dirname(dir);
-    if (parent === dir) break;
-    dir = parent;
-  }
-  return process.cwd();
+  return baseResolveProjectRoot(undefined, { symlinkGuard: false });
 }
 
 /**

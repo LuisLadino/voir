@@ -1,7 +1,7 @@
 ---
 name: switch-trigger
 description: >
-  Name the moment someone stops doing what they were doing and considers a change, then map the four forces. Trigger on "why would they switch", "why would they care", "what's the hook", "why now", "struggling moment", "what's the trigger", "what's the pain", "jobs to be done", "what job is this doing", "why would they pick us". Forces a concrete switching story with push, pull, anxiety, and habit instead of a generic benefits list.
+  Name the switch moment and map the four forces. Triggers: "why would they switch", "why now", "struggling moment", "what's the pain", "why pick us". Push, pull, anxiety, habit, not a benefits list.
 ---
 
 # Switch Trigger

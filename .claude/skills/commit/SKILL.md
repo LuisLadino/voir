@@ -1,9 +1,7 @@
 ---
 name: commit
 description: >
-  Commit and create PR. Use when: the user says "commit", "let's commit",
-  "save this", "checkpoint", "done", "ready to merge", or indicates work
-  is complete. Does the full flow: commit → push → PR.
+  Commit, push, and open a PR. Triggers: "commit", "let's commit", "save this", "checkpoint", "done", "ready to merge". Full flow: stages, commits, pushes, opens PR on the issue.
 allowed-tools: Read, Bash, Edit
 ---
 
@@ -77,6 +75,20 @@ DOCUMENTATION CHECK:
 - Component specs: [updated X / still accurate / N/A]
 ```
 
+### 3.5. Spec Conformance Pass (MANDATORY — do not skip)
+
+The `check-spec-conformance` hook will fire on commit and catch the mechanizable rules. This step covers the rest: the judgment-based rules in the spec prose that no regex can decide.
+
+**Principle: editing a `className`, a token, a value, or any line puts EVERY token on that line in scope for spec conformance, not just the part you intended to change.** "I only changed the column count" is not a defense. Drift inherited from adjacent existing code is still drift.
+
+For each spec whose `applies_to` matches a file in this diff:
+
+1. Re-read the spec's documented rules. The `enforce-specs` hook required the read at edit time; this step is the apply pass.
+2. Walk the staged diff for that file. For every added or modified line, check every token on the line against the spec rules.
+3. If the spec documents a standard and the line carries a value not on that standard — even one inherited unchanged from the surrounding code — call it out and fix it before staging.
+
+If the conformance hook blocks the commit, fix the reported violations and re-stage. Do not retry with `--no-verify`. Do not amend the rule to silence the report unless the documented standard has actually shifted. If it has, update the spec prose alongside the rule in the same commit.
+
 ### 4. Stage and Commit
 
 ```bash
@@ -87,6 +99,12 @@ SKILL_ACTIVE=1 DOCS_CHECKED=1 git commit -m "type(scope): description"
 Prefer specific files over `git add -A`.
 
 **Note:** `SKILL_ACTIVE=1 DOCS_CHECKED=1` bypasses the enforce-skills hook. BOTH markers are required — the hook verifies you completed Step 3 (documentation check) before allowing the commit. Only use within this skill after completing Step 3.
+
+If the hook also reports `[BRANCH SHIFTED]`, the session's branch changed between SessionStart and now. This usually means another concurrent session in the same checkout ran `git checkout`. Verify the current branch is the intended one. If yes, add `BRANCH_VERIFIED=1` to the commit:
+
+`SKILL_ACTIVE=1 DOCS_CHECKED=1 BRANCH_VERIFIED=1 git commit -m "..."`
+
+If the branch is wrong, run `git checkout <starting-branch>` first, or use `.claude/scripts/worktree.cjs create` to isolate this session.
 
 ### 5. Push
 
@@ -179,6 +197,19 @@ gh pr merge --auto --squash --delete-branch
 
 This queues the PR to merge automatically after CI checks pass.
 
+**Fallback when auto-merge is unavailable.** If the command fails with `Auto merge is not allowed for this repository`, the repo has the "Allow auto-merge" setting off. This is expected on repos that have not enabled it — not a flow error. Two paths:
+
+- Preferred, one-time: enable it on the repo, then re-run the command above.
+  ```bash
+  gh repo edit --enable-auto-merge
+  ```
+- Per-PR fallback: wait for CI, then merge directly.
+  ```bash
+  gh pr checks --watch && gh pr merge --squash --delete-branch
+  ```
+
+Either way, continue to step 9.
+
 ### 9. Watch CI and Deploy
 
 After enabling auto-merge, spawn a background watcher. It notifies you when the ship settles — success or failure — without you having to check manually. This closes the gap where CI failures and broken deploys pass silently.
@@ -193,16 +224,18 @@ PR=$(gh pr view --json number --jq .number)
 Monitor({
   description: "Watching PR #${PR} CI + deploy",
   persistent: true,
-  command: "bash .claude/hooks/lifecycle/watch-ship.sh ${PR}"
+  command: "node .claude/hooks/lifecycle/watch-ship.cjs ${PR}"
 })
 ```
 
 The watcher emits exactly one line on completion:
 
-- `✓ PR #N merged + deploy healthy` — happy path, session stays quiet until then
+- `✓ PR #N merged + deploy reachable` — happy path, session stays quiet until then
 - `✓ PR #N merged (no deploy check configured)` — projects without a deploy target
 - `✗ PR #N — CI failed or merge blocked` — action needed, check `gh pr view N`
 - `✗ PR #N merged but deploy unreachable` — revert or investigate
+
+The `deploy reachable` line confirms HTTP 2xx from the URL, not that the merged commit is the live build. On projects where merge does not auto-deploy, run the deploy step before treating this signal as confirmation of the merged code.
 
 You don't wait for it. Continue with other work. The Monitor runs in the background for the rest of the session.
 
@@ -229,4 +262,4 @@ When configured, the watcher curls this URL after merge and reports if the respo
 - Multiple commits get squashed on merge
 - Branch auto-deletes after merge
 - Requires: repo has branch protection rules allowing auto-merge
-- The Monitor watcher runs `bash .claude/hooks/lifecycle/watch-ship.sh <PR>` — script is kit-synced
+- The Monitor watcher runs `node .claude/hooks/lifecycle/watch-ship.cjs <PR>` — script is kit-synced

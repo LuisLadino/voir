@@ -1,5 +1,7 @@
 #!/usr/bin/env node
 
+// @kit-internal — required by inject-context.cjs
+
 /**
  * Phase-Entry Menu Module
  *
@@ -115,7 +117,7 @@ function buildMenu(enteringPhase, registry, projectRoot) {
 }
 
 function check(sessionId) {
-  const state = getRecentTrackingState();
+  const state = getRecentTrackingState(undefined, sessionId);
   const invocation = findWorkflowSlashInvocation(state);
   if (!invocation) return { content: null, emitted: false };
 

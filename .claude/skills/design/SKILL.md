@@ -1,14 +1,7 @@
 ---
 name: design
 description: >
-  Design UI with craft. Use when the user mentions design, UI, UX, look and
-  feel, polish, typography, color, motion, layout, spacing, hierarchy, or
-  says "make it better", "this feels off", pre-ship visual review, before
-  committing visual changes. Also use when the user describes a visual bug
-  in engineering terms: "fix the animation", "doesn't align", "layout is
-  off", "positioning wrong", "broken hero", "scroll is jumpy", "element
-  doesn't render right". Two modes: 'shape' sets direction before code,
-  'polish' runs a quality pass before review.
+  Design UI with craft. Triggers: "design", "polish", "look and feel", "typography", "layout", "spacing", "hierarchy", "this feels off", "fix the animation", "doesn't align". Two modes: shape sets direction, polish runs quality pass.
 allowed-tools: Read, Grep, Glob, Bash, Edit, Write
 ---
 

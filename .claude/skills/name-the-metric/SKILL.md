@@ -1,7 +1,7 @@
 ---
 name: name-the-metric
 description: >
-  Before acting on data, name the metric. What it measures, what it counts, what it excludes. Trigger on "the data shows", "the data says", "what does the data say", "the numbers say", "usage is up", "usage is down", "activation rate", "retention is", "the signal is", "adoption is", or any claim-from-data before a decision. Forces a definition check before the number drives action.
+  Name the metric before acting on data: measures, counts, excludes. Triggers: "the data shows", "the numbers say", "usage is up", "activation rate", "retention", "adoption". Definition check first.
 ---
 
 # Name The Metric

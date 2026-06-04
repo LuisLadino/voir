@@ -1,7 +1,7 @@
 ---
 name: chesterton-audit
 description: >
-  Audit existing code, config, or rules before deleting or replacing them. Trigger on "delete this", "remove this", "clean up", "why is this here", "looks unused", "can we drop", "dead code", "simplify", "strip out", "refactor away", "rewrite this", "redo this". Forces explicit enumeration of why the existing thing exists before removing it, so hidden load-bearing behavior doesn't disappear with the delete.
+  Audit why code exists before deleting it. Triggers: "delete this", "remove this", "clean up", "looks unused", "dead code", "strip out". Surfaces load-bearing behavior before delete kills it.
 ---
 
 # Chesterton Audit
@@ -93,3 +93,5 @@ Not all at once. Pick the one that unsticks the decision.
 5. If the answer is known and the reason still applies, recommend keeping it. Say why in one sentence.
 
 A Chesterton audit that never blocks a delete is broken. If every audit green-lights removal, the audit is not running.
+
+Related: `drift-check` runs the same confirm-intent discipline for audit findings. When a mechanical audit flags a value as "drift" or an "outlier," check that the spec documents it as a deliberate exception before normalizing it away.

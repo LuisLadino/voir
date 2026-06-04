@@ -157,6 +157,49 @@ voices:
   });
 });
 
+test('redirect to out-of-tree scratch path (no .claude ancestor) → allow (#631)', () => {
+  // A scratch redirect outside any project tree (e.g. npm logs to /tmp) is shell
+  // mechanics, not content. The target sits directly under os.tmpdir(), a sibling
+  // of the project dir, so it has no .claude ancestor. Pre-fix this blocked
+  // because resolveProjectRoot fell back to a rootless dir and the default Luis
+  // voice applied.
+  withProject(`
+default: luis
+voices:
+  luis:
+    rules: "L"
+`, dir => {
+    const scratch = path.join(os.tmpdir(), 'ev-scratch-' + Date.now() + '.txt');
+    const r = runHook({
+      tool_name: 'Bash',
+      tool_input: { command: `npm run knip > ${scratch}` },
+      session_id: 's1'
+    }, { cwd: dir });
+    assert.strictEqual(r.exitCode, 0,
+      `expected allow for out-of-tree scratch redirect, got ${r.exitCode} stderr=${r.stderr}`);
+  });
+});
+
+test('redirect to in-tree content file still blocks (#631 guard not over-broad)', () => {
+  // Confirms the #631 out-of-tree skip does not leak into in-tree content. The
+  // target resolves under the project dir (has .claude), so enforcement holds.
+  withProject(`
+default: luis
+voices:
+  luis:
+    rules: "L"
+`, dir => {
+    const r = runHook({
+      tool_name: 'Bash',
+      tool_input: { command: `echo draft > ${path.join(dir, 'notes.txt')}` },
+      session_id: 's1'
+    }, { cwd: dir });
+    assert.strictEqual(r.exitCode, 2,
+      `expected block for in-tree content redirect, got ${r.exitCode} stderr=${r.stderr}`);
+    assert.ok(r.stderr.includes('VOICE CHECK: luis'));
+  });
+});
+
 test('Write retry with revised content → allow after first-attempt reminder', () => {
   withProject(`
 default: luis
@@ -234,6 +277,129 @@ voices:
     }, { cwd: dir });
     assert.strictEqual(second.exitCode, 2);
     assert.ok(second.stderr.includes('unchanged'));
+  });
+});
+
+console.log('\n#640 pbcopy sink detection (literal token vs real pipe)');
+
+test('real pipe to pbcopy with quoted content still blocks (#640 guard)', () => {
+  withProject(`
+default: luis
+voices:
+  luis:
+    rules: "L"
+`, dir => {
+    const r = runHook({
+      tool_name: 'Bash',
+      tool_input: { command: `echo "Leverage world-class synergy" | pbcopy` },
+      session_id: 's1'
+    }, { cwd: dir });
+    assert.strictEqual(r.exitCode, 2,
+      `expected block for real pipe-to-pbcopy, got ${r.exitCode} stderr=${r.stderr}`);
+    assert.ok(r.stderr.includes('VOICE CHECK: luis'));
+  });
+});
+
+test('pbcopy reading from a file as leading command still blocks (#640 guard)', () => {
+  withProject(`
+default: luis
+voices:
+  luis:
+    rules: "L"
+`, dir => {
+    const r = runHook({
+      tool_name: 'Bash',
+      tool_input: { command: `pbcopy < draft.txt` },
+      session_id: 's1'
+    }, { cwd: dir });
+    assert.strictEqual(r.exitCode, 2,
+      `expected block for leading pbcopy, got ${r.exitCode} stderr=${r.stderr}`);
+    assert.ok(r.stderr.includes('VOICE CHECK: luis'));
+  });
+});
+
+test('grep with pbcopy in a quoted alternation → allow (#640)', () => {
+  withProject(`
+default: luis
+voices:
+  luis:
+    rules: "L"
+`, dir => {
+    const r = runHook({
+      tool_name: 'Bash',
+      tool_input: { command: `grep -n 'redirect\\|pbcopy\\|channel' enforce-voice.cjs` },
+      session_id: 's1'
+    }, { cwd: dir });
+    assert.strictEqual(r.exitCode, 0,
+      `expected allow for grep alternation containing pbcopy, got ${r.exitCode} stderr=${r.stderr}`);
+  });
+});
+
+test('grep with an unquoted backslash-escaped pipe before pbcopy → allow (#640)', () => {
+  withProject(`
+default: luis
+voices:
+  luis:
+    rules: "L"
+`, dir => {
+    const r = runHook({
+      tool_name: 'Bash',
+      tool_input: { command: `grep -rn foo\\|pbcopy src` },
+      session_id: 's1'
+    }, { cwd: dir });
+    assert.strictEqual(r.exitCode, 0,
+      `expected allow for unquoted escaped-pipe grep, got ${r.exitCode} stderr=${r.stderr}`);
+  });
+});
+
+test('echo with a literal "| pbcopy" inside quotes → allow (#640)', () => {
+  withProject(`
+default: luis
+voices:
+  luis:
+    rules: "L"
+`, dir => {
+    const r = runHook({
+      tool_name: 'Bash',
+      tool_input: { command: `echo "example: echo hi | pbcopy"` },
+      session_id: 's1'
+    }, { cwd: dir });
+    assert.strictEqual(r.exitCode, 0,
+      `expected allow for echo mentioning pbcopy, got ${r.exitCode} stderr=${r.stderr}`);
+  });
+});
+
+test('sed with a pbcopy token in a quoted script → allow (#640)', () => {
+  withProject(`
+default: luis
+voices:
+  luis:
+    rules: "L"
+`, dir => {
+    const r = runHook({
+      tool_name: 'Bash',
+      tool_input: { command: `sed -n 's/.*| pbcopy.*//p' notes.txt` },
+      session_id: 's1'
+    }, { cwd: dir });
+    assert.strictEqual(r.exitCode, 0,
+      `expected allow for sed script mentioning pbcopy, got ${r.exitCode} stderr=${r.stderr}`);
+  });
+});
+
+test('gh issue create with "| pbcopy" inside a quoted --body → allow (#640)', () => {
+  withProject(`
+default: luis
+voices:
+  luis:
+    rules: "L"
+`, dir => {
+    const r = runHook({
+      tool_name: 'Bash',
+      tool_input: { command: `gh issue create --title t --body "tripped on: echo x | pbcopy"` },
+      session_id: 's1'
+    }, { cwd: dir });
+    assert.strictEqual(r.exitCode, 0,
+      `expected allow for gh issue body mentioning pbcopy, got ${r.exitCode} stderr=${r.stderr}`);
   });
 });
 

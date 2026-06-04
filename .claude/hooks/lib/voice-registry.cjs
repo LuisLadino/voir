@@ -19,6 +19,7 @@ const path = require('path');
 const YAML = require('./yaml-mini.cjs');
 
 const { logError } = require('./session-utils.cjs');
+const { resolveProjectRoot: baseResolveProjectRoot } = require('./project-root.cjs');
 
 const FALLBACK_LUIS_RULES = [
   'No em dashes. Use periods or colons.',
@@ -31,17 +32,12 @@ const FALLBACK_LUIS_RULES = [
   'If it sounds like AI wrote it, rewrite it.'
 ].join('\n');
 
+// Voice registry consumers (enforce-voice.cjs, voice-identity.cjs) assume a
+// non-null return and build paths via `path.join(root, ...)`. Opting out of
+// the symlink guard preserves that contract. Tracked for reconsideration in
+// #246's decisions_needing_review.
 function resolveProjectRoot(hintPath) {
-  if (process.env.CLAUDE_PROJECT_DIR) return process.env.CLAUDE_PROJECT_DIR;
-  const hintAbs = hintPath && typeof hintPath === 'string' && path.isAbsolute(hintPath);
-  let dir = hintAbs ? path.dirname(hintPath) : process.cwd();
-  for (let i = 0; i < 20; i++) {
-    if (fs.existsSync(path.join(dir, '.claude'))) return dir;
-    const parent = path.dirname(dir);
-    if (parent === dir) break;
-    dir = parent;
-  }
-  return hintAbs ? path.dirname(hintPath) : process.cwd();
+  return baseResolveProjectRoot(hintPath, { symlinkGuard: false });
 }
 
 function registryPath(projectRoot) {

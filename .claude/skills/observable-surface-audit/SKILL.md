@@ -1,7 +1,7 @@
 ---
 name: observable-surface-audit
 description: >
-  Map every observable surface a change exposes before shipping it, because consumers depend on what they can see, not what you documented. Trigger on "change the output", "change the format", "rename", "update the schema", "change the trigger", "update the config", "bump the version", "breaking change", "this is internal", "downstream will be fine", "sync the kit". Forces a written list of observable behaviors and known consumers so Hyrum-style silent breakage stops happening at kit boundaries.
+  Map observable surfaces a change exposes. Triggers: "change the output", "rename", "update the schema", "breaking change", "this is internal", "sync the kit". Behaviors and consumers before breakage.
 ---
 
 # Observable Surface Audit

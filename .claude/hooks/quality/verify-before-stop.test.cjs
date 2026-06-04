@@ -20,7 +20,11 @@ const {
   checkForStoppingSuggestions,
   extractLastAssistantText,
   isSkillComplete,
-  getIncompleteSkills
+  getIncompleteSkills,
+  buildSentinelRegex,
+  getRepoRoot,
+  isInsideRepo,
+  isDebugScanExempt
 } = require('./verify-before-stop.cjs');
 
 let pass = 0;
@@ -233,6 +237,255 @@ try {
   report(
     '#231: null scoped tracking returns [] incomplete skills',
     getIncompleteSkills(null).length === 0
+  );
+
+  // #256: explicit SKILL_COMPLETE sentinel completes a gated skill.
+  const sentinelPlan = isSkillComplete('/plan', ["echo 'SKILL_COMPLETE: plan'"], new Set());
+  report(
+    '#256: SKILL_COMPLETE: plan sentinel completes /plan',
+    sentinelPlan.complete === true,
+    `got ${JSON.stringify(sentinelPlan)}`
+  );
+
+  // #256: sentinel inside a compound command, script plus echo, completes.
+  const sentinelCompound = isSkillComplete(
+    '/plan',
+    ['bash /tmp/issues.sh && echo "SKILL_COMPLETE: plan"'],
+    new Set()
+  );
+  report(
+    '#256: sentinel in compound command completes /plan',
+    sentinelCompound.complete === true,
+    `got ${JSON.stringify(sentinelCompound)}`
+  );
+
+  // #256: sentinel for the wrong skill does NOT complete a different gated skill.
+  const sentinelWrong = isSkillComplete(
+    '/commit',
+    ["echo 'SKILL_COMPLETE: plan'"],
+    new Set()
+  );
+  report(
+    '#256: SKILL_COMPLETE: plan does NOT complete /commit',
+    sentinelWrong.complete === false,
+    `got ${JSON.stringify(sentinelWrong)}`
+  );
+
+  // #256: plugin-namespaced /plan accepts the sentinel after stripping namespace.
+  const sentinelNamespaced = isSkillComplete(
+    '/project-management:plan',
+    ["echo 'SKILL_COMPLETE: plan'"],
+    new Set()
+  );
+  report(
+    '#256: namespaced /project-management:plan with sentinel is complete',
+    sentinelNamespaced.complete === true,
+    `got ${JSON.stringify(sentinelNamespaced)}`
+  );
+
+  // #256: hyphenated skill name /dispatch works. Confirms regex escape path.
+  const sentinelDispatch = isSkillComplete(
+    '/dispatch',
+    ["echo 'SKILL_COMPLETE: dispatch'"],
+    new Set()
+  );
+  report(
+    '#256: SKILL_COMPLETE: dispatch sentinel completes /dispatch',
+    sentinelDispatch.complete === true,
+    `got ${JSON.stringify(sentinelDispatch)}`
+  );
+
+  // #256: bare SKILL_COMPLETE without a name does NOT complete.
+  const sentinelBare = isSkillComplete('/plan', ["echo 'SKILL_COMPLETE'"], new Set());
+  report(
+    '#256: bare SKILL_COMPLETE without skill name does NOT complete',
+    sentinelBare.complete === false,
+    `got ${JSON.stringify(sentinelBare)}`
+  );
+
+  // #256: sentinel without whitespace after colon also matches.
+  const sentinelTight = isSkillComplete('/plan', ["echo 'SKILL_COMPLETE:plan'"], new Set());
+  report(
+    '#256: SKILL_COMPLETE:plan with no whitespace matches',
+    sentinelTight.complete === true,
+    `got ${JSON.stringify(sentinelTight)}`
+  );
+
+  // #256: prompt-scoped Skill plus script plus sentinel completes /plan.
+  const sentinelScoped = {
+    tools: [
+      { tool: 'Skill', skill: 'plan' },
+      { tool: 'Bash', command: 'bash /tmp/issues.sh' },
+      { tool: 'Bash', command: "echo 'SKILL_COMPLETE: plan'" }
+    ]
+  };
+  report(
+    '#256: scoped Skill + script + sentinel completes /plan',
+    getIncompleteSkills(sentinelScoped).length === 0,
+    `got ${JSON.stringify(getIncompleteSkills(sentinelScoped))}`
+  );
+
+  // #256: prefix-collision guard. SKILL_COMPLETE: plan must NOT match a sentinel
+  // built for a hypothetical "plan-foo" skill.
+  const planFooRx = buildSentinelRegex('plan-foo');
+  report(
+    '#256: SKILL_COMPLETE: plan does NOT match plan-foo sentinel regex',
+    planFooRx.test('echo SKILL_COMPLETE: plan') === false
+  );
+  report(
+    '#256: SKILL_COMPLETE: plan-foo matches plan-foo sentinel regex',
+    planFooRx.test('echo SKILL_COMPLETE: plan-foo') === true
+  );
+
+  // #256: regex-escape sanity. Skill name with metachar treats . as literal.
+  const planDotRx = buildSentinelRegex('weird.name');
+  report(
+    '#256: skill name with metachar treats . as literal',
+    planDotRx.test('SKILL_COMPLETE: weird.name') === true &&
+    planDotRx.test('SKILL_COMPLETE: weirdXname') === false
+  );
+
+  // #510: isInsideRepo — files outside the repo root must not be scanned.
+  const fakeRoot = '/Users/dev/myrepo';
+  report(
+    '#510: file nested inside repo root is inside',
+    isInsideRepo('/Users/dev/myrepo/src/a.cjs', fakeRoot) === true
+  );
+  report(
+    '#510: the repo root itself is inside',
+    isInsideRepo('/Users/dev/myrepo', fakeRoot) === true
+  );
+  report(
+    '#510: /tmp scratch file is outside the repo',
+    isInsideRepo('/tmp/apply_phase2.py', fakeRoot) === false
+  );
+  report(
+    '#510: sibling dir sharing a name prefix is outside the repo',
+    isInsideRepo('/Users/dev/myrepo-backup/x.cjs', fakeRoot) === false
+  );
+  report(
+    '#510: null repo root preserves prior behavior (treats path as inside)',
+    isInsideRepo('/tmp/anything.py', null) === true
+  );
+
+  // #510: getRepoRoot resolves the repo from the test process cwd.
+  const detectedRoot = getRepoRoot();
+  report(
+    '#510: getRepoRoot resolves a root that contains this test file',
+    typeof detectedRoot === 'string' && isInsideRepo(__dirname, detectedRoot),
+    `got ${JSON.stringify(detectedRoot)}`
+  );
+
+  // #557: isDebugScanExempt — repo-root scripts/ holds CLI tooling, exempt.
+  const exRoot = '/Users/dev/myrepo';
+  report(
+    '#557: repo-root scripts/ file is exempt from the debug scan',
+    isDebugScanExempt('/Users/dev/myrepo/scripts/run-tests.cjs', exRoot) === true
+  );
+  report(
+    '#557: nested file under repo-root scripts/ is exempt',
+    isDebugScanExempt('/Users/dev/myrepo/scripts/cognee/install.sh', exRoot) === true
+  );
+  report(
+    '#557: a sibling dir sharing the "scripts" prefix is NOT exempt',
+    isDebugScanExempt('/Users/dev/myrepo/scriptsfoo/bar.cjs', exRoot) === false
+  );
+  report(
+    '#557: an ordinary production file is NOT exempt',
+    isDebugScanExempt('/Users/dev/myrepo/src/components/Button.tsx', exRoot) === false
+  );
+  report(
+    '#557: .claude/scripts/ still exempt (regression)',
+    isDebugScanExempt('/Users/dev/myrepo/.claude/scripts/x.cjs', exRoot) === true
+  );
+  report(
+    '#557: .claude/hooks/ still exempt (regression)',
+    isDebugScanExempt('/Users/dev/myrepo/.claude/hooks/foo.cjs', exRoot) === true
+  );
+  report(
+    '#557: test files still exempt (regression)',
+    isDebugScanExempt('/Users/dev/myrepo/src/foo.test.cjs', exRoot) === true
+  );
+  report(
+    '#557: with no repo root, repo-root scripts/ cannot be detected as exempt',
+    isDebugScanExempt('/Users/dev/myrepo/scripts/run-tests.cjs', null) === false
+  );
+
+  // #604: slash-command invocations now tracked. Registered skills with no
+  // completion signal trip the gate.
+  const scopedSlashResearch = {
+    tools: [],
+    skillInvocations: [{ skill: 'research', source: 'slash_command' }]
+  };
+  const slashResearchIncomplete = getIncompleteSkills(scopedSlashResearch);
+  report(
+    '#604: slash-invoked research without tools is incomplete',
+    slashResearchIncomplete.length === 1 && slashResearchIncomplete[0].skill === '/research',
+    `got ${JSON.stringify(slashResearchIncomplete)}`
+  );
+
+  // #604: slash-invoked research with WebSearch tool is complete.
+  const scopedSlashResearchWithTool = {
+    tools: [{ tool: 'WebSearch', query: 'test' }],
+    skillInvocations: [{ skill: 'research', source: 'slash_command' }]
+  };
+  const slashResearchComplete = getIncompleteSkills(scopedSlashResearchWithTool);
+  report(
+    '#604: slash-invoked research with WebSearch is complete',
+    slashResearchComplete.length === 0,
+    `got ${JSON.stringify(slashResearchComplete)}`
+  );
+
+  // #604: slash-invoked exempt skills (e.g., /define) never trip.
+  const scopedSlashDefine = {
+    tools: [],
+    skillInvocations: [{ skill: 'define', source: 'slash_command' }]
+  };
+  const slashDefineIncomplete = getIncompleteSkills(scopedSlashDefine);
+  report(
+    '#604: slash-invoked exempt skill /define is complete',
+    slashDefineIncomplete.length === 0,
+    `got ${JSON.stringify(slashDefineIncomplete)}`
+  );
+
+  // #604: unregistered slash commands (like /cost, /help) are silently ignored.
+  // They don't trip the drift tripwire because they're built-in CLI, not kit skills.
+  const scopedUnregisteredSlash = {
+    tools: [],
+    skillInvocations: [{ skill: 'cost', source: 'slash_command' }]
+  };
+  const unregisteredSlashIgnored = getIncompleteSkills(scopedUnregisteredSlash);
+  report(
+    '#604: unregistered slash command /cost is ignored (no drift tripwire)',
+    unregisteredSlashIgnored.length === 0,
+    `got ${JSON.stringify(unregisteredSlashIgnored)}`
+  );
+
+  // #604: both Skill-tool and slash-command in same scope, each checked.
+  const scopedBothPaths = {
+    tools: [
+      { tool: 'Skill', skill: 'plan' },
+      { tool: 'Bash', command: 'gh issue create' }
+    ],
+    skillInvocations: [{ skill: 'research', source: 'slash_command' }]
+  };
+  const bothPathsChecked = getIncompleteSkills(scopedBothPaths);
+  report(
+    '#604: both Skill-tool (plan, complete) and slash (research, incomplete) checked',
+    bothPathsChecked.length === 1 && bothPathsChecked[0].skill === '/research',
+    `got ${JSON.stringify(bothPathsChecked)}`
+  );
+
+  // #604: dedup — same skill from both paths appears once in result.
+  const scopedDupedResearch = {
+    tools: [{ tool: 'Skill', skill: 'research' }, { tool: 'WebSearch' }],
+    skillInvocations: [{ skill: 'research', source: 'slash_command' }]
+  };
+  const dedupedResult = getIncompleteSkills(scopedDupedResearch);
+  report(
+    '#604: dedup — same skill via both paths counts once',
+    dedupedResult.length === 0,
+    `got ${JSON.stringify(dedupedResult)}`
   );
 
 } finally {

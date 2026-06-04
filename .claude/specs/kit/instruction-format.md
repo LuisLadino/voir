@@ -14,6 +14,8 @@ category: kit
 
 How to write instructions that Claude follows reliably. Use this when writing agents, skills, system prompts, or any text meant to direct Claude's behavior.
 
+For skill descriptions specifically, the YAML `description:` field that Claude uses to decide whether to fire, see `.claude/specs/kit/skills.md`. The 200-byte budget and three-part structure are skill-specific and stricter than the general guidance here.
+
 **Source:** Claude Code system prompts (Piebald-AI, version 2.1.71-2.1.75) + Claude Code source analysis (March 2026 npm leak, v2.1.88) + Anthropic documentation + LLM context processing research.
 
 ## Eval-Validated Patterns

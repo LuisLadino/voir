@@ -1,7 +1,7 @@
 ---
 name: audience-lock
 description: >
-  Before writing for an audience, pick the smallest viable audience and name one specific reader. Trigger on "who is this for", "target audience", "write to everyone", "broad appeal", "write a post", "write for", "launch this", "announce this", "tell people about", "who cares about this". Forces a named single reader and a written "not for" list before any copy, instead of writing for a blurry everyone.
+  Smallest viable audience, one named reader, before writing. Triggers: "who is this for", "target audience", "broad appeal", "launch this", "announce this". Forces a named reader and not-for list.
 ---
 
 # Audience Lock

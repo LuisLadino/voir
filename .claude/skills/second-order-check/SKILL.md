@@ -1,7 +1,7 @@
 ---
 name: second-order-check
 description: >
-  Play the fix forward two or three steps before committing to it. Trigger on "quick fix", "just add a", "one more hook", "just patch it", "band-aid", "workaround", "add a check", "add a guard", "hotfix", "i'll just". Forces enumeration of delayed consequences and feedback effects the proposed intervention creates, not only its intended result.
+  Play the fix forward two or three steps. Triggers: "quick fix", "just add a", "one more hook", "band-aid", "workaround", "hotfix", "i'll just". Enumerates delayed consequences of the intervention.
 ---
 
 # Second-Order Check

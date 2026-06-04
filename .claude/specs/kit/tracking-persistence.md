@@ -11,6 +11,7 @@ applies_to:
   - ".claude/hooks/context/enforce-specs.cjs"
   - ".claude/hooks/context/enforce-voice.cjs"
   - ".claude/hooks/safety/enforce-plan.cjs"
+  - "scripts/collect-analyze-data.cjs"
 category: kit
 ---
 
@@ -55,12 +56,13 @@ Observability events (consumed by `readTrackingState`):
 | `tool` | `tool-tracker.cjs` | `tool`, plus tool-specific fields |
 | `command` | `command-log.cjs` | `command`, `exitCode`, `stdout` |
 | `file_change` | `track-changes.cjs` | `tool`, `file`, `op` |
-| `failure` | `tool-failure.cjs` | `tool`, `error` |
+| `failure` | `tool-failure.cjs` | `tool`, `failureKind`, `error` |
 | `subagent_start` | `subagent-tracker.cjs` | `id`, `subagentType`, `description` |
 | `subagent_stop` | `subagent-tracker.cjs` | `id` |
 | `injection` | `inject-utils.logInjection` | action fields |
-| `skill_invocation` | `clear-pending.cjs` on UserPromptSubmit when prompt starts with `/name` | `skill`, `source` |
+| `skill_invocation` | `clear-pending.cjs` on UserPromptSubmit when prompt starts with `/name` or `/plugin:name` | `skill`, `source` |
 | `phase_menu_emitted` | `phase-menu.cjs` on phase entry via workflow slash command | `phase` |
+| `hook_handler_error` | `stdin-hook.cjs:54` `runStdinHook` observability mode on handler exception | `hook`, `error` |
 
 Per-prompt enforcement events (consumed by `readPromptScopedState`):
 
@@ -72,6 +74,17 @@ Per-prompt enforcement events (consumed by `readPromptScopedState`):
 | `voice_blocked` | `enforce-voice.cjs` on PreToolUse Bash block | `hash` |
 
 New observability events register in `readTrackingState`. New enforcement events register in `readPromptScopedState`. Readers are segregated so observability and enforcement concerns don't cross-contaminate.
+
+### `failure` event classification
+
+`tool-failure.cjs` writes a `failureKind` discriminator on every failure event so consumers can distinguish genuine errors from intentional non-zero exits.
+
+- **`tool_error`** — genuine tool error: thrown exception, MCP failure, file-not-found on Read, network timeout, auth scope error, etc. This is the default; ambiguous cases classify here.
+- **`nonzero_exit`** — Bash exited non-zero as part of normal command semantics. Currently: `grep`/`egrep`/`fgrep`/`ggrep`/`rg`/`ag`/`ack` exit 1 on no match, `diff`/`cmp` exit 1 on differences. Allowlist lives at `classify-failure.cjs:NONZERO_EXIT_BINS`.
+
+Non-Bash tools always classify as `tool_error` since Read/Edit/Write/Glob/Grep/MCP have no normal "intentional non-zero" path.
+
+Awareness reads only `tool_error` events when checking the failure threshold. Old session events without `failureKind` are treated as `tool_error` for backward compatibility.
 
 ## Writer Contract
 
@@ -100,13 +113,52 @@ Three reducers over the same event stream, segregated by concern:
 
 **Observability, prompt-scoped.** `readPromptScopedTrackingState(sessionId)` / `getRecentPromptScopedTrackingState()` return the same shape as `readTrackingState` but events only count after the most recent `prompt_start`. Use for Stop-time checks that care about "what happened in the current turn." Example: `verify-before-stop`'s incomplete-skill detector. See #231. When no `prompt_start` has been written, returns empty collections. The caller treats that as "nothing to check" rather than fail-closed, because Stop-time observability is a nudge, not a gate.
 
-**Per-prompt enforcement.** `readPromptScopedState(sessionId)` / `getRecentPromptScopedState()` return `{ specsRead, planSkillRead, lastVoiceBlockedHash, promptStart }`. State is reset at every `prompt_start` event and fails closed when no `prompt_start` has been written. Use for PreToolUse enforcement hooks `enforce-specs`, `enforce-plan`, `enforce-voice` in main-session contexts.
+**Per-prompt enforcement.** `readPromptScopedState(sessionId)` / `getRecentPromptScopedState()` return `{ specsRead, planSkillRead, lastVoiceBlockedHash, promptStart }`. State is reset at every `prompt_start` event and fails closed when no `prompt_start` has been written. Use for PreToolUse enforcement hooks where the gate should refresh each prompt. Currently: `enforce-voice` in main-session contexts, where `lastVoiceBlockedHash` is content-specific and per-prompt scoping is correct.
 
-**Session-scoped enforcement for subagents.** `readSessionScopedSpecState(sessionId)` / `getRecentSessionScopedSpecState()` return the same shape but scan the entire tracking file without requiring a `prompt_start` boundary. Subagents don't fire `UserPromptSubmit`, so no `prompt_start` event is ever written in a subagent session. The prompt-scoped reader fails closed there and blocks every edit even after required specs have been read. Enforcement hooks branch on `data.agent_id` in the hook payload: present means use this reader, absent means use the prompt-scoped reader. Single-turn by design. Safe because subagents have no follow-up prompts to isolate from.
+**Session-scoped enforcement.** `readSessionScopedSpecState(sessionId)` / `getRecentSessionScopedSpecState()` return the same shape but scan the entire tracking file without requiring a `prompt_start` boundary. `enforce-specs` and `enforce-plan` use this reader in every context (#459, #452, #552): a spec read or `/plan` read once in a session stays satisfied across prompt cycles and `/build` branch switches, instead of being re-required at every prompt. `enforce-voice` uses it only for subagent contexts. Subagents don't fire `UserPromptSubmit`, so no `prompt_start` is ever written and the prompt-scoped reader would fail closed. `enforce-voice` branches on `data.agent_id` to choose. Dispatch workers are separate sessions with their own tracking files, so session-scoping never leaks reads between them.
+
+**Per-skill telemetry, prompt-scoped.** `readSkillTelemetryState(sessionId)` / `getRecentSkillTelemetryState()` return an array of per-skill window records for the most recent prompt — read-only metric, never a gate. State resets at every `prompt_start` and returns `[]` when none has been written. The cross-session `/analyze` aggregator in `scripts/collect-analyze-data.cjs` produces the same record from a whole-file scan and sums the records into counts. The record shape and its semantics are below. See #347, #603.
 
 `readTrackingEvents` returns the raw event array when you need it.
 
 Malformed lines from partial writes on crash are silently skipped. Readers MUST tolerate this. Do not validate the whole file; validate the events you read. Writers prefix each append with a leading newline so a partially-flushed prior write can't merge into the next good line.
+
+### Per-skill telemetry rollup
+
+`readSkillTelemetryState` reduces the event stream into one record per skill window. Adopted from OpenSpace's runtime telemetry shape (#345 V2 FM8 mitigation, #347). It adds no event types and no write-path change. It reuses `skill_invocation`, `tool`, and `failure` events other hooks already emit.
+
+**Record shape.** One object per window:
+
+| field | type | meaning |
+|---|---|---|
+| `skill_name` | string | normalized name (leading `/` and `plugin:` prefix stripped) |
+| `applied` | `true` | the window existed; always true on a record |
+| `completed` | boolean | the window reached its completion signal (see below) |
+| `fallback_used` | boolean | incomplete, then a different skill ran later in the same prompt segment |
+| `tool_success_count` | number | `tool` events inside the window |
+| `tool_failure_count` | number | `failure` events inside the window |
+| `source` | `'slash_command'` \| `'skill_tool'` | how the window opened |
+| `started_at` | ISO-8601 \| null | opening event timestamp |
+| `ended_at` | ISO-8601 \| null | closing timestamp |
+| `duration_seconds` | number | `ended_at − started_at`, clamped at 0 |
+| `exempt` | boolean | skill is exempt from completion (see the distinction below) |
+| `registered` | boolean | skill has an entry in `skill-patterns` |
+
+**Window open/close.** A window opens at a `skill_invocation` event (slash-command path, `source: 'slash_command'`) or a `tool` event with `tool === 'Skill'` carrying a `skill` field (assistant Skill-tool call, `source: 'skill_tool'`). It closes at the next window-opening event, the next `prompt_start`, or end-of-events. Windows never nest. Opening a second skill closes the first.
+
+**Completion is the shared rule.** Whether a window `completed` is decided by `isSkillComplete` in `.claude/hooks/lib/skill-patterns.cjs`, the same rule `verify-before-stop` uses to gate Stop. The signal is a Bash-command regex, a tool name, or a `SKILL_COMPLETE: <name>` sentinel. One rule, two consumers: edit the table once and both the gate and the metric move together. `skill-patterns` deliberately has no dependency on `session-utils`, so the require graph stays a DAG.
+
+**Fallback attribution.** After all windows in a prompt segment close, a window is marked `fallback_used` when it is non-exempt, did not complete, and a window for a *different* skill ran later in the same segment. The reading: the skill was invoked, didn't finish, and something else took over. Exempt and completed windows never count.
+
+**Exempt vs unregistered, the distinction consumers must respect.** Three states come out of `skill-patterns`:
+
+- **Registered with a completion rule** (`registered: true`, `exempt: false`), e.g. `commit`, `build`, `test`, `research`, `plan`, `dispatch`. Completion is measurable. Report completion and fallback rates.
+- **Exempt** (`registered: true`, `exempt: true`), e.g. `review`, `define`, `ideate`, and the lens skills. They complete by definition: `isSkillComplete` returns `complete: true` unconditionally, so `completed` is always true and `fallback_used` always false. A completion rate is a constant 100% and carries no signal.
+- **Unregistered** (`registered: false`, `exempt: false`), no entry in the table, e.g. `/verify`, `/audit`. `isSkillComplete` returns `complete: false`, so a raw `completed` count is always 0. That zero means "no completion is defined," not "the skill failed."
+
+Consumers MUST NOT report a completion or fallback rate for exempt or unregistered skills. Doing so reads as a false degradation (unregistered: a hard 0%) or a meaningless constant (exempt: a hard 100%). The measurable set is exactly `registered && !exempt`. `applied` counts and the tool-success ratio stay meaningful for all three states. The reference renderer is `formatTelemetrySkillLine` in `scripts/collect-analyze-data.cjs`: it tags `(exempt)` / `(unregistered)` and suppresses the rate lines for both.
+
+**Two windowers, on purpose.** `readSkillTelemetryState` is prompt-scoped: it resets at every `prompt_start`, returns only the last prompt's windows, and returns `[]` when no `prompt_start` was written. That fits Stop-time and current-turn reads. The `/analyze` aggregator needs the opposite, every window across every prompt and every session including subagent sessions that never write a `prompt_start`, and it works from a raw events array per file rather than a resolved `(sessionId, workspacePath)` pair. So `collect-analyze-data.cjs` segments on `prompt_start`, runs the identical window logic per segment, keeps all records, then sums the per-window booleans into per-skill counts. The completion rule is shared via `skill-patterns`; only the windowing differs, and it differs on purpose. Hoisting the shared windower into a lib both sides call would touch enforcement-critical `session-utils` and is tracked in #614.
 
 ## Anti-Patterns
 

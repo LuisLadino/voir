@@ -1,7 +1,7 @@
 ---
 name: failure-mode-taxonomy
 description: >
-  Enumerate AI-specific failure modes before shipping. Trigger on "red team", "adversarial", "jailbreak", "prompt injection", "misuse", "abuse case", "attack surface", "what could go wrong with this prompt", "safety check", "harmful output", "exploit". Forces a written taxonomy pass across hallucination, injection, refusal leaks, capability creep, and data exfil, distinct from product pre-mortem.
+  Enumerate AI failure modes before shipping. Triggers: "red team", "adversarial", "jailbreak", "prompt injection", "abuse case", "safety check". Pass across hallucination, injection, refusal leaks.
 ---
 
 # Failure-Mode Taxonomy

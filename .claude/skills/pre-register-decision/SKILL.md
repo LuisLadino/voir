@@ -1,7 +1,7 @@
 ---
 name: pre-register-decision
 description: >
-  Before collecting or analyzing data, write down the decision rule. If X, do A. If Y, do B. Trigger on "let's measure", "i want to test", "let's run an experiment", "a/b test", "try it and see", "let's check if", "let's see if it works", "wait for data", "let the data decide", "measure impact". Forces the decision criterion to be named before the result is known, so the result can actually change the action.
+  Write the decision rule before collecting data. If X do A. Triggers: "let's measure", "let's run an experiment", "a/b test", "try it and see", "wait for data". Criterion before result.
 ---
 
 # Pre-Register The Decision

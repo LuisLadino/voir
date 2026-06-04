@@ -112,6 +112,34 @@ report(
   );
 
   [tmpWs, tmpWs2, tmpWs3].forEach(d => fs.rmSync(d, { recursive: true, force: true }));
+
+  // #292 parallel-session: inferCurrentPhase routes by sessionId.
+  // Two sessions in the same workspace, B writes last so B's mtime > A's.
+  // Without sessionId, picks B by mtime; with sessionId, picks the right one.
+  {
+    const tmpWsP = fs.mkdtempSync(path.join(os.tmpdir(), 'phase-292-'));
+    appendTrackingEvent('lens-292-A', { type: 'session_init' }, tmpWsP);
+    appendTrackingEvent('lens-292-A', {
+      type: 'skill_invocation', skill: 'research', source: 'slash_command'
+    }, tmpWsP);
+    appendTrackingEvent('lens-292-B', { type: 'session_init' }, tmpWsP);
+    appendTrackingEvent('lens-292-B', {
+      type: 'skill_invocation', skill: 'build', source: 'slash_command'
+    }, tmpWsP);
+    const phaseA = inferCurrentPhase(tmpWsP, 'lens-292-A');
+    const phaseB = inferCurrentPhase(tmpWsP, 'lens-292-B');
+    report(
+      '#292 inferCurrentPhase: sessionId=A returns during_research',
+      phaseA === 'during_research',
+      `got ${phaseA}`
+    );
+    report(
+      '#292 inferCurrentPhase: sessionId=B returns during_build',
+      phaseB === 'during_build',
+      `got ${phaseB}`
+    );
+    fs.rmSync(tmpWsP, { recursive: true, force: true });
+  }
 }
 
 // Registry validation + end-to-end lens-router.check

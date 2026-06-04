@@ -74,22 +74,6 @@
           "skill": "trunk-test"
         },
         {
-          "name": "signifier-audit",
-          "attachment": "during_build",
-          "triggers": [
-            "wire this up",
-            "connect the ui",
-            "make this clickable",
-            "hook up the trigger",
-            "let the user",
-            "add a flag",
-            "add a command",
-            "add a hook",
-            "ui is ready"
-          ],
-          "skill": "signifier-audit"
-        },
-        {
           "name": "assumption-reframe",
           "attachment": "during_research",
           "triggers": [
@@ -148,6 +132,7 @@
           "name": "affordance-audit",
           "attachment": "during_test",
           "triggers": [
+            "is this clear",
             "is this obvious",
             "will users know",
             "discoverability",
@@ -157,7 +142,17 @@
             "how do they know",
             "test the ui",
             "try the ui",
-            "walk through the ui"
+            "walk through the ui",
+            "wire this up",
+            "connect the ui",
+            "make this clickable",
+            "hook up the trigger",
+            "let the user",
+            "add a flag",
+            "add a command",
+            "add a hook",
+            "interactive",
+            "ui is ready"
           ],
           "skill": "affordance-audit"
         },
@@ -250,6 +245,23 @@
             "sync the kit"
           ],
           "skill": "observable-surface-audit"
+        },
+        {
+          "name": "drift-check",
+          "triggers": [
+            "this is drift",
+            "looks like drift",
+            "is this drift",
+            "outlier",
+            "inconsistent with",
+            "normalize this",
+            "normalize these",
+            "align with the others",
+            "align with the rest",
+            "the others use",
+            "matches the pattern"
+          ],
+          "skill": "drift-check"
         }
       ]
     },

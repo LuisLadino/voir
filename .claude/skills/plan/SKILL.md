@@ -1,10 +1,7 @@
 ---
 name: plan
 description: >
-  Organize and plan work using GitHub. Use when: the user says "let's plan",
-  "what's next", "prioritize", "add to backlog", "create an issue", "new idea",
-  "future feature", "we should", "organize", "what's in the backlog", "milestone",
-  or wants to capture something for later without building it now.
+  Organize work in GitHub issues. Triggers: "let's plan", "what's next", "prioritize", "add to backlog", "create an issue", "milestone", "future feature". Captures work in tracker without starting it.
 allowed-tools: Bash, Read
 model: haiku
 ---
@@ -222,6 +219,25 @@ SKILL_ACTIVE=1 gh issue create --title "Idea: X" --label "type/idea,status/backl
 ```
 
 Then continue with whatever else was happening.
+
+## Batched Issue Creation
+
+When creating multiple issues at once, batch them in a script or compound command. The verify-before-stop hook scans recorded bash command strings, not the contents of script files, so a `bash /tmp/issues.sh` invocation hides the inner `gh issue create` calls.
+
+Emit `echo 'SKILL_COMPLETE: plan'` after the batch so the hook accepts the work as complete:
+
+```bash
+cat > /tmp/issues.sh <<'EOF'
+SKILL_ACTIVE=1 gh issue create --title "..." --body "..." --label "type/feature,priority/medium,status/backlog"
+SKILL_ACTIVE=1 gh issue create --title "..." --body "..." --label "type/feature,priority/medium,status/backlog"
+SKILL_ACTIVE=1 gh issue create --title "..." --body "..." --label "type/feature,priority/medium,status/backlog"
+EOF
+bash /tmp/issues.sh && echo 'SKILL_COMPLETE: plan'
+```
+
+The sentinel works for any skill the hook gates. Format: `SKILL_COMPLETE: <skill-name>`. Whitespace after the colon is optional. Match is case-sensitive and rejects prefix collisions, so `plan` does not satisfy a `plan-foo` skill.
+
+If a single `SKILL_ACTIVE=1 gh issue create` runs as its own Bash tool call, the hook already detects completion and no sentinel is needed. Use the sentinel only when the natural completion signal is hidden by a script, dynamic command, or other indirection.
 
 ## Design Thinking and Issues
 

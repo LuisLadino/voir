@@ -1,7 +1,7 @@
 ---
 name: assumption-reframe
 description: >
-  Peel the assumptions off the research question before going deep. Trigger on "let's research", "look into", "figure out why", "what do users want", "what should this do", "user needs", "the problem is", "what we want to know", "the goal is". Forces a naive-question pass that splits the research question from the interview question and exposes the assumption baked into the framing before the work starts.
+  Peel assumptions off the research question. Triggers: "figure out why", "what do users want", "the goal is", "the real question". Splits research from interview question, exposes buried assumptions.
 ---
 
 # Assumption Reframe

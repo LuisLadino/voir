@@ -1,7 +1,7 @@
 ---
 name: reference-triangulation
 description: >
-  Force three references across different domains before locking visual direction. Trigger on "let's set the direction", "what should this look like", "let's pick a style", "going for a vibe", "design direction", "pick references", "visual direction", "what's the feel". One vibe-reference is hand-wavy. Three references triangulated across proportion, texture, and tone produce a direction you can defend.
+  Three references across domains before locking direction. Triggers: "set the direction", "what should this look like", "pick a style", "design direction". Triangulated refs over one vibe-ref.
 ---
 
 # Reference Triangulation

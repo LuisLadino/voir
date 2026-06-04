@@ -1,7 +1,7 @@
 ---
 name: reversibility-classify
 description: >
-  Classify the decision as a one-way door or two-way door before committing to it. Trigger on "let's go with", "we'll use", "locking in", "final answer", "decision is", "going with", "committing to the approach", "final call", "shape of this", "architecture is". Forces explicit reversibility framing so irreversible choices get the scrutiny they need and reversible ones ship fast instead of stalling in debate.
+  Classify decision as one-way or two-way door. Triggers: "let's go with", "we'll use", "locking in", "final answer", "going with", "committing to". Irreversible gets scrutiny, reversible ships.
 ---
 
 # Reversibility Classify

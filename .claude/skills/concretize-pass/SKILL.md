@@ -1,7 +1,7 @@
 ---
 name: concretize-pass
 description: >
-  Replace every abstract adjective in the draft with a specific example, number, or outcome. Trigger on "polish the draft", "final pass", "tighten this up", "review the copy", "before I send", "before I publish", "ready to send", "clean up the writing", "edit pass". Forces a concretize sweep so "significant impact" becomes "cut deploy time from 45 to 9 minutes" before the piece goes out.
+  Replace abstract adjectives with examples or numbers. Triggers: "polish the draft", "tighten this up", "final pass", "before I send", "edit pass". "Significant" becomes "45 to 9 minutes".
 ---
 
 # Concretize Pass

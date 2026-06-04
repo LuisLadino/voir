@@ -21,6 +21,8 @@ const path = require('path');
 const crypto = require('crypto');
 const { execSync } = require('child_process');
 
+const skillTelemetry = require('./skill-telemetry.cjs');
+
 const HOME = process.env.HOME || process.env.USERPROFILE;
 const PROJECTS_DIR = path.join(HOME, '.claude/projects');
 
@@ -337,6 +339,23 @@ function readPromptScopedTrackingState(sessionId, workspacePath) {
 }
 
 /**
+ * Per-skill telemetry rollup, scoped to the current prompt. Thin wrapper over
+ * the shared windowing core in skill-telemetry.cjs (#614) using its
+ * prompt-scoped segmentation policy: state resets at every `prompt_start`, only
+ * the most recent prompt's windows are returned, and it fails closed (returns
+ * []) when no `prompt_start` has been written. Read-only metric, not a gate.
+ *
+ * Used by verify-before-stop's skill-completion check so skill invocations from
+ * prior turns do not re-trigger at every subsequent Stop event (#231). Tracking
+ * is append-only and persists through context compaction, so without scoping,
+ * every Skill invocation ever made in the session would re-appear at every Stop.
+ */
+function readSkillTelemetryState(sessionId, workspacePath) {
+  const events = readTrackingEvents(sessionId, workspacePath);
+  return skillTelemetry.reduceSkillTelemetry(events, { mode: 'prompt-scoped' });
+}
+
+/**
  * Reduce tracking events into the state that per-prompt enforcement hooks
  * need. Scans forward and resets state at every `prompt_start`, so only
  * events from the most recent prompt count. Fail-closed when no
@@ -389,20 +408,18 @@ function readPromptScopedState(sessionId, workspacePath) {
 }
 
 /**
- * Session-wide variant of readPromptScopedState for subagent contexts. Scans
- * every `spec_read`, `plan_skill_read`, and `voice_blocked` event in the
- * session tracking file without requiring a `prompt_start` boundary.
+ * Session-wide spec-read state. Scans every `spec_read`, `plan_skill_read`,
+ * and `voice_blocked` event in the session tracking file, with no
+ * `prompt_start` boundary — a spec read at any point in the session counts.
  *
- * Why this exists: subagents don't fire UserPromptSubmit, so no
- * `prompt_start` event is ever written to their tracking file. The
- * prompt-scoped reader fails closed in that context and blocks all edits
- * even after required specs have been read. This reader treats the entire
- * subagent session as one enforcement scope. Single-turn by design; safe
- * because a subagent has no follow-up prompts to isolate from.
- *
- * Callers: `enforce-specs.cjs` when `data.agent_id` is present. Do not use
- * in main-session contexts — `readPromptScopedState` is the correct reader
- * there because it resets state at each user prompt.
+ * This is the reader `enforce-specs.cjs` uses in every context (#459, #452).
+ * Spec reads must not be re-required each prompt cycle: context carries
+ * across prompts in an interactive session, and `/build` runs one branch per
+ * prompt, so a prompt-scoped reader re-required every spec on every branch
+ * switch. Dispatch isolation still holds — each worker is a separate session
+ * with its own tracking file. Subagents need it for a second reason: they
+ * never fire UserPromptSubmit, so no `prompt_start` is ever written and a
+ * prompt-scoped reader would fail closed.
  */
 function readSessionScopedSpecState(sessionId, workspacePath) {
   const events = readTrackingEvents(sessionId, workspacePath);
@@ -466,38 +483,46 @@ const _trackingStateCache = new Map();
 const _promptScopedStateCache = new Map();
 const _sessionScopedSpecStateCache = new Map();
 const _promptScopedTrackingStateCache = new Map();
+const _skillTelemetryStateCache = new Map();
 
-function _recentSessionIdFor(workspacePath) {
+// When a caller passes the active session_id (from the hook payload), use it
+// directly. Parallel Claude Code sessions share a tracking directory, and
+// findRecentSessionId picks by mtime, which races when a sibling session
+// writes a tool event between this session's spec_read and its Edit. See #263.
+// Sanitize at the boundary so callers can pass raw payload values.
+function _recentSessionIdFor(workspacePath, sessionId) {
+  if (sessionId) return sanitizeSessionId(sessionId);
   const key = workspacePath || '';
   if (_recentSessionIdCache.has(key)) return _recentSessionIdCache.get(key);
-  const sessionId = findRecentSessionId(workspacePath);
-  _recentSessionIdCache.set(key, sessionId);
-  return sessionId;
+  const resolved = findRecentSessionId(workspacePath);
+  _recentSessionIdCache.set(key, resolved);
+  return resolved;
 }
 
 /**
- * Find the most recent session's prompt-scoped enforcement state. Used by
- * enforcers that run before a tool call without the session id threaded in.
+ * Resolve the invoking session's prompt-scoped enforcement state. Pass
+ * `sessionId` from the hook payload when available; falls back to picking
+ * the most recently modified tracking file when absent. See #263.
  */
-function getRecentPromptScopedState(workspacePath) {
-  const sessionId = _recentSessionIdFor(workspacePath);
-  if (!sessionId) return null;
-  if (_promptScopedStateCache.has(sessionId)) return _promptScopedStateCache.get(sessionId);
-  const state = readPromptScopedState(sessionId, workspacePath);
-  _promptScopedStateCache.set(sessionId, state);
+function getRecentPromptScopedState(workspacePath, sessionId) {
+  const sid = _recentSessionIdFor(workspacePath, sessionId);
+  if (!sid) return null;
+  if (_promptScopedStateCache.has(sid)) return _promptScopedStateCache.get(sid);
+  const state = readPromptScopedState(sid, workspacePath);
+  _promptScopedStateCache.set(sid, state);
   return state;
 }
 
 /**
- * Session-wide variant of getRecentPromptScopedState for subagent contexts.
- * See `readSessionScopedSpecState` for why this exists.
+ * Resolve session-wide spec-read state — the reader `enforce-specs` uses in
+ * every context. See `readSessionScopedSpecState` for why.
  */
-function getRecentSessionScopedSpecState(workspacePath) {
-  const sessionId = _recentSessionIdFor(workspacePath);
-  if (!sessionId) return null;
-  if (_sessionScopedSpecStateCache.has(sessionId)) return _sessionScopedSpecStateCache.get(sessionId);
-  const state = readSessionScopedSpecState(sessionId, workspacePath);
-  _sessionScopedSpecStateCache.set(sessionId, state);
+function getRecentSessionScopedSpecState(workspacePath, sessionId) {
+  const sid = _recentSessionIdFor(workspacePath, sessionId);
+  if (!sid) return null;
+  if (_sessionScopedSpecStateCache.has(sid)) return _sessionScopedSpecStateCache.get(sid);
+  const state = readSessionScopedSpecState(sid, workspacePath);
+  _sessionScopedSpecStateCache.set(sid, state);
   return state;
 }
 
@@ -506,12 +531,12 @@ function getRecentSessionScopedSpecState(workspacePath) {
  * observability state. Used by Stop hooks that need "current session"
  * context without requiring the session_id to be threaded through.
  */
-function getRecentTrackingState(workspacePath) {
-  const sessionId = _recentSessionIdFor(workspacePath);
-  if (!sessionId) return null;
-  if (_trackingStateCache.has(sessionId)) return _trackingStateCache.get(sessionId);
-  const state = readTrackingState(sessionId, workspacePath);
-  _trackingStateCache.set(sessionId, state);
+function getRecentTrackingState(workspacePath, sessionId) {
+  const sid = _recentSessionIdFor(workspacePath, sessionId);
+  if (!sid) return null;
+  if (_trackingStateCache.has(sid)) return _trackingStateCache.get(sid);
+  const state = readTrackingState(sid, workspacePath);
+  _trackingStateCache.set(sid, state);
   return state;
 }
 
@@ -521,14 +546,23 @@ function getRecentTrackingState(workspacePath) {
  * written, returns empty collections. The caller treats that as "no
  * activity in current prompt", which is a safe no-op for Stop-time checks.
  */
-function getRecentPromptScopedTrackingState(workspacePath) {
-  const sessionId = _recentSessionIdFor(workspacePath);
-  if (!sessionId) return null;
-  if (_promptScopedTrackingStateCache.has(sessionId)) {
-    return _promptScopedTrackingStateCache.get(sessionId);
+function getRecentPromptScopedTrackingState(workspacePath, sessionId) {
+  const sid = _recentSessionIdFor(workspacePath, sessionId);
+  if (!sid) return null;
+  if (_promptScopedTrackingStateCache.has(sid)) {
+    return _promptScopedTrackingStateCache.get(sid);
   }
-  const state = readPromptScopedTrackingState(sessionId, workspacePath);
-  _promptScopedTrackingStateCache.set(sessionId, state);
+  const state = readPromptScopedTrackingState(sid, workspacePath);
+  _promptScopedTrackingStateCache.set(sid, state);
+  return state;
+}
+
+function getRecentSkillTelemetryState(workspacePath, sessionId) {
+  const sid = _recentSessionIdFor(workspacePath, sessionId);
+  if (!sid) return null;
+  if (_skillTelemetryStateCache.has(sid)) return _skillTelemetryStateCache.get(sid);
+  const state = readSkillTelemetryState(sid, workspacePath);
+  _skillTelemetryStateCache.set(sid, state);
   return state;
 }
 
@@ -540,6 +574,7 @@ function _resetRecentStateCache() {
   _promptScopedStateCache.clear();
   _sessionScopedSpecStateCache.clear();
   _promptScopedTrackingStateCache.clear();
+  _skillTelemetryStateCache.clear();
 }
 
 function initSession(workspacePath) {
@@ -618,6 +653,7 @@ module.exports = {
   getProjectDir,
   getTrackingDir,
   getSessionId,
+  sanitizeSessionId,
   getSessionTrackingPath,
   appendTrackingEvent,
   readTrackingEvents,
@@ -625,10 +661,12 @@ module.exports = {
   readPromptScopedState,
   readSessionScopedSpecState,
   readPromptScopedTrackingState,
+  readSkillTelemetryState,
   getRecentTrackingState,
   getRecentPromptScopedState,
   getRecentSessionScopedSpecState,
   getRecentPromptScopedTrackingState,
+  getRecentSkillTelemetryState,
   _resetRecentStateCache,
   initSession,
   cleanupOldSessions,

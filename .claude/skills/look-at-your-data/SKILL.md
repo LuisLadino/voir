@@ -1,7 +1,7 @@
 ---
 name: look-at-your-data
 description: >
-  Read the actual outputs before tuning the prompt. Trigger on "it's not working", "output is off", "quality is bad", "tune the prompt", "adjust the prompt", "improve the output", "better results", "the model isn't", "hallucinating", "wrong answer", "debug this prompt", "fix the system prompt". Forces a data-centric pass: read N real outputs, label the failure modes, then decide what to change, instead of prompt-tweaking from memory.
+  Read actual outputs before tuning the prompt. Triggers: "tune the prompt", "adjust the prompt", "hallucinating", "wrong answer", "debug this prompt". Read N outputs, label failures first.
 ---
 
 # Look At Your Data

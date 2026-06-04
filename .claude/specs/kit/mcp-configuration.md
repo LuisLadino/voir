@@ -88,6 +88,65 @@ The top-level `claudeAiMcpEverConnected` array in `~/.claude.json` records which
 4. Is it project-specific AND only yours? → Layer 3 in the `~/.claude.json` project entry. Claude Code writes this for you when you install from a session.
 5. None of the above? → don't install; the tool probably isn't the right fit.
 
+## MCP wrapper runtime
+
+Claude Code's in-process MCP client is one-shot per session. When a server's stdio process closes, CC records the disconnect and drops its tools. It does not auto-reattach. The OS may respawn the subprocess, and `claude mcp list` may show green, but the in-session tool list stays empty until CC restarts.
+
+- NEVER kill a live MCP subprocess mid-session. Recovery requires a full CC restart.
+- Code changes to a wrapper take effect only on the next CC launch. No hot-reload.
+- To iterate without restarting CC, spawn the wrapper from a shell and test it via JSON-RPC over stdio directly. Integrate through CC only once the wrapper is stable.
+
+Applies to every MCP server CC spawns as a subprocess — kit-owned wrappers in `scripts/mcp-servers/`, community servers installed via `claude mcp add`, and project-scope entries in `.mcp.json`.
+
+### Wrapper stderr capture
+
+Claude Code captures stderr from every MCP wrapper subprocess it spawns. Wrapper stderr is:
+
+- Visible to operators via `claude mcp list` status output and the `/mcp` debug pane.
+- Available in CC's internal MCP logs for post-mortem inspection.
+- **Not** streamed to the user's terminal during an active session.
+
+Consequence: benign warnings or telemetry emitted by embedded libraries, for example mem0's PostHog timeout when outbound connectivity is absent, are invisible in normal use. Silencing them at the wrapper level is cosmetic, not functional.
+
+**When to silence anyway:**
+
+- The output is confused with a real failure on `claude mcp list --status` or the `/mcp` pane.
+- The signal-to-noise ratio during operator debugging degrades enough to slow diagnosis.
+- A privacy requirement mandates suppressing outbound telemetry at the source, regardless of user visibility.
+
+**When not to silence:**
+
+- The output is benign and only visible to operators who deliberately inspect MCP state.
+- The library's opt-out flag is unstable or undocumented, and gating it creates a maintenance burden.
+
+**Contrast with CLI scripts in the same repo:** CLI scripts under `scripts/mcp-servers/` that run attached to the user's terminal, such as `migrate-from-omega.cjs`, have user-visible stderr. Library noise surfaces directly in the user's output stream. `migrate-from-omega.cjs` sets `process.env.MEM0_TELEMETRY = 'false'` before `require('mem0ai/oss')` for this reason; see `scripts/mcp-servers/migrate-from-omega.cjs:17-21` and issue #262. The same library inside `scripts/mcp-servers/mem0.cjs` does not set the flag because its stderr is captured by Claude Code and the noise is not user-visible. Issue #270 records that scope decision.
+
+## Wrapper score semantics: mem0 search
+
+The mem0 wrapper at `scripts/mcp-servers/mem0.cjs` passes `threshold` through to `memory.search`. Scores are semantic similarity in [0, 1] from the configured embedder. Current stack uses `nomic-embed-text` via Ollama.
+
+**SDK defaults:**
+
+- Default `threshold` when omitted: 0.1, per `mem0ai/oss` at `index.js:6598`.
+- Valid range: 0 to 1 inclusive. SDK throws for out-of-range input at `index.js:5857-5866`.
+- The wrapper Zod schema enforces the same range at the MCP boundary for earlier failure.
+
+**Empirical distribution on the 31-memory post-migration corpus:**
+
+Signal and decoys overlap on this corpus. True hits observed 0.527 to 0.783. Abstention decoy top-1 observed at 0.598. No universal threshold cleanly separates hits from decoys. See issue #265 for the full Q1-Q7 run and #266 for the re-verification.
+
+**When to set `threshold`:**
+
+- Consumer tolerates missing a low-confidence true hit: pass a higher threshold such as 0.6 to filter noise.
+- Consumer needs recall over precision: omit, or pass a low value such as 0.1.
+- Abstention logic lives in the consumer, not the wrapper. Read `score` from each result and decide per-use-case.
+
+**How to interpret `score`:**
+
+The wrapper returns `{ results: [{ id, memory, score, metadata, ... }] }`. `score` is post-threshold semantic similarity. A consuming agent that needs "answer or abstain" behavior must inspect scores before treating top-1 as an answer.
+
+**Anti-pattern:** Hardcoding a mem0 `threshold` above 0.1 at the wrapper. Empirical data on the current corpus shows true hits score as low as 0.527 and decoys reach 0.598. A universal threshold filters real hits or admits decoys. Keep `threshold` a pass-through and push abstention policy to the consumer.
+
 ## Anti-patterns
 
 **Installing account-connector services per-project.** Gmail, Calendar, Drive, etc. are Layer 1. Per-project installation duplicates what's already global and creates drift.

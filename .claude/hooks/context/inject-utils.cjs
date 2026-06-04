@@ -1,5 +1,7 @@
 #!/usr/bin/env node
 
+// @kit-internal — required by inject-context.cjs
+
 /**
  * Shared utilities for context injection modules
  */

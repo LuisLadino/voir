@@ -1,7 +1,7 @@
 ---
 name: leverage-point-scan
 description: >
-  Scan the proposed intervention against Meadows' hierarchy of leverage before picking a solution. Trigger on "how should we fix", "what's the right intervention", "best place to fix", "where should this live", "tweak the value", "change the default", "adjust the threshold", "add a rule", "change the config". Forces the question are you tweaking a parameter when you should be changing a rule, or changing a rule when you should be changing the goal.
+  Scan the intervention against Meadows' hierarchy. Triggers: "how should we fix", "best place to fix", "tweak the value", "change the default", "adjust the threshold". Parameter-vs-rule-vs-goal level.
 ---
 
 # Leverage Point Scan

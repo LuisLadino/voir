@@ -19,11 +19,12 @@
  *   exists yet. Synthesize writes the cache; its presence = already reported.
  *
  * Fast path:
- *   If `.claude/dispatch/active.json` has no workers, exit immediately.
+ *   If `.claude/dispatch/active.jsonl` has no active workers, exit immediately.
  */
 
 const fs = require('fs');
 const path = require('path');
+const registry = require('../lib/dispatch-registry.cjs');
 
 function projectRoot() {
   try {
@@ -40,11 +41,8 @@ function dispatchDir(root) {
 }
 
 function readActive(root) {
-  const activePath = path.join(dispatchDir(root), 'active.json');
   try {
-    const raw = fs.readFileSync(activePath, 'utf8');
-    const parsed = JSON.parse(raw);
-    return Array.isArray(parsed.workers) ? parsed.workers : [];
+    return registry.readActiveWorkers(root).workers;
   } catch {
     return [];
   }

@@ -1,7 +1,7 @@
 ---
 name: type-specimen
 description: >
-  Set a real content specimen before locking a font pairing. Trigger on "pick a font", "font pairing", "lock the typography", "set the type", "choose a font", "typography direction", "commit to the font", "go with inter", "go with this font". Fonts that look right in isolation often fail against the real longest headline, body paragraph, and data table. A specimen tests the pair against real content before commit.
+  Real content specimen before locking a font pairing. Triggers: "pick a font", "font pairing", "lock the typography", "choose a font", "typography direction". Tests longest headline, body, data table.
 ---
 
 # Type Specimen

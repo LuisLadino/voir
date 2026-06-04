@@ -1,7 +1,7 @@
 ---
 name: curse-check
 description: >
-  List what the reader does not know that Luis is silently assuming. Trigger on "wrap up", "write the handoff", "write the issue", "draft the PR", "note to self", "for future me", "explain what", "summary of", "send to the team", "share context", "onboard", "documentation". Forces a curse-of-knowledge pass so handoffs, issues, and memos survive the reader's cold state.
+  List what the reader does not know before a handoff. Triggers: "what do they not know", "for future me", "share context", "onboard", "summary of". Curse-of-knowledge pass for cold readers.
 ---
 
 # Curse Check

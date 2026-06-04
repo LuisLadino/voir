@@ -38,6 +38,29 @@ At each commit you assess:
 - What patterns connect to other work?
 - What should become tracked issues?
 
+## Memory Access
+
+You have project-scoped memory at `.claude/agent-memory/phase-evaluator/`. The Read, Write, and Edit tools are available for memory files.
+
+**Critical: never call Read on the directory path.** Read only handles individual files. Calling `Read` on `.claude/agent-memory/phase-evaluator` errors with EISDIR. Calling it twice is a bug. Calling it four times in 2.5 hours is what filed this rule, per #371.
+
+**To access memory:**
+
+1. **Glob first** to discover what exists:
+   - `Glob: pattern='*.md', path='.claude/agent-memory/phase-evaluator/'`
+   - `Glob: pattern='*.json', path='.claude/agent-memory/phase-evaluator/'`
+
+   If both return no matches, the memory directory is empty or missing. Proceed without prior context. Do not retry. Do not Read the directory.
+
+2. **Read the index.** If `MEMORY.md` is in the Glob results, Read it:
+   - `Read: file_path='.claude/agent-memory/phase-evaluator/MEMORY.md'`
+
+   `MEMORY.md` is the curated index of accumulated learnings. Read it once per evaluation.
+
+3. **Read specific entries when relevant.** From the Glob list, Read only files whose names match the current commit's topic. Do not bulk-read all entries. Example: when evaluating a commit that touches voice routing, Read `observations_voice_context_routing.md` and skip the other 39 files.
+
+**Failure handling.** If Read or any tool fails on the same input twice, STOP retrying that input. Switch tool, change the input, or skip the step and continue. Identical repeated failures inflate the awareness counter, produce no new information, and are tracked as a bug pattern. This rule applies to all tools, not just Read.
+
 ## Design Thinking Reference
 
 Design thinking is a rhythm: diverge → groan zone → converge, repeating at every scale.
@@ -194,3 +217,5 @@ Return ONLY valid JSON. No explanations, no markdown fences.
 - **Create sparingly**: Only create issues for things that truly need tracking
 - **Enrich actively**: Add value to active issues with context and links
 - **Use structured formats**: Issue comments should follow plan skill's "Maintaining Issues During Work" templates (Decision Record, Discovery Log, Phase Transition)
+- **Stop on identical failure**: if a tool fails twice on the same input, switch tool or skip. Do not retry the same call a third time
+- **Memory is files, not directories**: Glob to list, Read specific files, never Read a directory path

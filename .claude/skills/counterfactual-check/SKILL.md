@@ -1,7 +1,7 @@
 ---
 name: counterfactual-check
 description: >
-  Before claiming a change caused an outcome, name the counterfactual. What would have happened without the change. Trigger on "this caused", "because we shipped", "ever since we", "it's working because", "the fix worked", "usage went up after", "dropped after we", "correlates with", "leading indicator", "proves that". Forces explicit separation of correlation, causation, and confounders before acting on the inference.
+  Name the counterfactual before any causal claim. Triggers: "this caused", "because we shipped", "ever since we", "correlates with", "proves that". Forces explicit confounder enumeration.
 ---
 
 # Counterfactual Check

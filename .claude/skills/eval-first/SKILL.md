@@ -1,7 +1,7 @@
 ---
 name: eval-first
 description: >
-  Write the scorecard before you build the AI feature. Trigger on "new skill", "new hook", "new prompt", "LLM feature", "AI-assisted", "add a trigger", "router logic", "classifier", "agent", "system prompt", "eval this", "does this work well". Forces a written pass/fail rubric and a golden set before code exists, so "it feels fine" gets replaced by "it scores N of M."
+  Write the scorecard before building an AI feature. Triggers: "new skill", "new prompt", "LLM feature", "system prompt", "router logic", "classifier". Pass/fail rubric and golden set before code.
 ---
 
 # Eval-First

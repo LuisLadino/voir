@@ -18,26 +18,40 @@
 
 const { getSessionId, appendTrackingEvent } = require('../lib/session-utils.cjs');
 
-// Captures the skill name when the user's prompt starts with `/name`.
-// Written as a dedicated event so phase inference covers both invocation
-// paths: the Skill tool captures assistant-side invocations via
+// Captures the skill name when the user's prompt starts with `/name` or the
+// plugin-namespaced `/plugin:name`. The optional `(?:[a-z][a-z0-9-]*:)?` group
+// matches the `plugin:` prefix; without it the colon broke the trailing `\s|$`
+// anchor and namespaced commands recorded nothing (#612). The full `plugin:skill`
+// token is kept verbatim so the recorded value matches the Skill-tool path, which
+// stores `tool_input.skill` unmodified; skill-patterns.normalizeSkillName collapses
+// the namespace downstream. Written as a dedicated event so phase inference covers
+// both invocation paths: the Skill tool captures assistant-side invocations via
 // tool-tracker, and slash commands bypass the Skill tool entirely.
-const SLASH_COMMAND_RE = /^\s*\/([a-z][a-z0-9-]*)(?:\s|$)/i;
+const SLASH_COMMAND_RE = /^\s*\/((?:[a-z][a-z0-9-]*:)?[a-z][a-z0-9-]*)(?:\s|$)/i;
+
+function parseSlashCommandSkill(prompt) {
+  const text = typeof prompt === 'string' ? prompt : '';
+  const match = text.match(SLASH_COMMAND_RE);
+  return match ? match[1].toLowerCase() : null;
+}
 
 function handleHook(data) {
   const sessionId = getSessionId(data?.session_id);
   appendTrackingEvent(sessionId, { type: 'prompt_start' });
 
-  const prompt = typeof data?.prompt === 'string' ? data.prompt : '';
-  const match = prompt.match(SLASH_COMMAND_RE);
-  if (match) {
+  const skill = parseSlashCommandSkill(data?.prompt);
+  if (skill) {
     appendTrackingEvent(sessionId, {
       type: 'skill_invocation',
-      skill: match[1].toLowerCase(),
+      skill,
       source: 'slash_command'
     });
   }
 }
 
-const { runStdinHook } = require('../lib/stdin-hook.cjs');
-runStdinHook(handleHook, { mode: 'observability' });
+if (require.main === module) {
+  const { runStdinHook } = require('../lib/stdin-hook.cjs');
+  runStdinHook(handleHook, { mode: 'observability' });
+}
+
+module.exports = { parseSlashCommandSkill, handleHook, SLASH_COMMAND_RE };

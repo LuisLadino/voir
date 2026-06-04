@@ -1,7 +1,7 @@
 ---
 name: heuristic-scan
 description: >
-  Run Nielsen's 10 usability heuristics against the surface you just changed. Trigger on "ready for review", "looks good to me", "does this feel right", "usability check", "heuristic pass", "any ux issues", "before i ship this ux". Forces a named-violation pass instead of a vibes check, so the thing you built holds up when a cold user hits it.
+  Run Nielsen's 10 heuristics on the surface you changed. Triggers: "usability check", "heuristic pass", "any ux issues", "ready for review", "before i ship this ux". Named-violation pass, not vibes.
 ---
 
 # Heuristic Scan

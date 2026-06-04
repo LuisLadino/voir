@@ -22,7 +22,9 @@ Some paths control Claude's behavior. Unreviewed changes to them can register ho
 - `~/.claude/settings.json` and `~/.claude/settings.local.json` — user-scope hook registration
 - `/Users/<name>/.claude/settings[.local].json` — same as above, absolute form
 
-The kit does not protect `.claude/specs/**`, `.claude/skills/**`, `.claude/agents/**`, or `.claude/commands/**`. Those are already gated by the Write/Edit enforce-specs hook through required spec reads. The sensitive-file gate here is stricter because the protected files bypass all other kit enforcement when they run.
+The kit does not protect `.claude/specs/**`, `.claude/skills/**`, `.claude/agents/**`, `.claude/commands/**`, or `.claude/docs/**` at the Bash gate. Those are already gated by the Write/Edit enforce-specs hook through required spec reads. The sensitive-file gate here is stricter because the protected files bypass all other kit enforcement when they run.
+
+**Note on Claude Code's built-in gate.** Separate from the kit's Bash gate, Claude Code itself refuses Write/Edit on a broader set of `.claude/` paths in non-interactive sessions. Per the #274 audit (2026-04-24) and the #374 extension (2026-04-27), CC's built-in gate covers `.claude/hooks/**`, `.claude/skills/**`, `.claude/specs/**`, `.claude/docs/**`, `.claude/commands/**`, `.claude/agents/**`, and `.claude/research/**`. Dispatched workers (`claude -p`) cannot answer the approval prompt, so the edit fails. Use `--plan-only` for any dispatch whose Definition of Done requires editing files under `.claude/` (see `dispatch.md` Plan-Only Mode section). The dispatch tooling auto-applies `--plan-only` per-target when the issue body references one of these subtrees; opt out per-invocation via `--no-auto-plan-only`. The two gates are independent: the kit's Bash gate plugs the heredoc/redirect bypass on hooks and settings; CC's built-in gate is the broader human-approval requirement on Write/Edit. Both fire; both have their reasons.
 
 ## Why the Gate Exists
 

@@ -1,7 +1,7 @@
 ---
 name: lead-with-decision
 description: >
-  Put the decision, recommendation, or ask in the first sentence. Trigger on "draft an email", "write the issue", "write the PR", "write the handoff", "write up", "send this", "application", "cover letter", "writing sample", "bio", "one-pager", "pitch", "memo". Forces BLUF discipline so the reader gets the point before the preamble.
+  Put the decision or ask in the first sentence. Triggers: "draft an email", "write the issue", "write the PR", "send this", "one-pager", "memo", "writing sample". BLUF before the preamble.
 ---
 
 # Lead With the Decision

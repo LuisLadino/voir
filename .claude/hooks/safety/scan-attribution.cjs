@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+// @kit-internal — called by .git/hooks/commit-msg and /commit skill, not a Claude Code lifecycle hook
 // Scans text for AI-attribution patterns. Used by client-mode projects to
 // prevent Claude/Anthropic attribution from landing in client repos.
 //

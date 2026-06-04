@@ -1,7 +1,7 @@
 ---
 name: name-the-reader
 description: >
-  Name the single reader and the action you want from them before writing a word. Trigger on "write a", "draft a", "put together a", "start writing", "portfolio piece", "case study", "application", "cover letter", "about me", "bio", "intro email", "pitch". Forces audience-first framing so the piece stops being about Luis and starts being about the reader.
+  Name the single reader and the action you want before writing. Triggers: "write a", "draft a", "portfolio piece", "case study", "application", "bio", "intro email". Audience-first framing.
 ---
 
 # Name the Reader

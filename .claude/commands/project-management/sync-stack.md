@@ -59,6 +59,34 @@ Generates `.claude/specs/architecture/system-map.yaml` showing:
 - Config file connections
 - Build pipeline flow
 
+## STEP 0: Resolve Project Specs Root
+
+Before reading or writing any project spec, resolve where project specs live. Kit-owned specs always stay under `.claude/specs/`; curated project specs go to `project_specs_root`.
+
+```bash
+# Read .claude/specs.yaml if it exists
+PROJECT_SPECS_ROOT=$(grep -E '^project_specs_root:' .claude/specs.yaml 2>/dev/null | sed -E 's/^project_specs_root:[[:space:]]*"?([^"]+)"?[[:space:]]*$/\1/')
+
+# If unset, pick default based on mode
+if [ -z "$PROJECT_SPECS_ROOT" ]; then
+  if grep -q '^mode: client' .claude/kit-mode.yaml 2>/dev/null; then
+    PROJECT_SPECS_ROOT="docs/specs"
+  else
+    PROJECT_SPECS_ROOT=".claude/specs"
+  fi
+fi
+```
+
+Every `.claude/specs/{coding,config,architecture,design,components,documentation}/` write path in the steps below resolves to `$PROJECT_SPECS_ROOT/...`. Stack-config stays at `.claude/specs/stack-config.yaml`, and every `file:` entry it generates is project-root-relative.
+
+**Legacy-layout hint.** If `PROJECT_SPECS_ROOT` is not `.claude/specs` but project specs are still found under `.claude/specs/{architecture,design,config,coding,components}/`, print:
+
+```
+Detected legacy spec layout. Run '/sync-stack --migrate-specs' to opt into the tracked location.
+```
+
+Do not auto-migrate. The no-flag run only hints; `--migrate-specs` is the explicit opt-in.
+
 ## STEP 1: Read Existing Specs
 
 First, read all existing spec files to understand current configuration.
@@ -836,7 +864,7 @@ Also check:
 
 ### 9c: Generate component specs
 
-For each component, create `.claude/specs/components/{name}.md`:
+For each component, create `$PROJECT_SPECS_ROOT/components/{name}.md`:
 
 ```markdown
 ---
@@ -934,7 +962,7 @@ If enforcement works, Claude will be required to read `components/backend.md` be
 
 ## STEP 10: Generate System Map
 
-Generate `.claude/specs/architecture/system-map.yaml` — a structured YAML document that maps how the project's components connect.
+Generate `$PROJECT_SPECS_ROOT/architecture/system-map.yaml` — a structured YAML document that maps how the project's components connect.
 
 ### Purpose
 
@@ -1378,6 +1406,109 @@ When run as `/sync-stack [dependency]`:
 6. Add to stack-config.yaml specs list
 
 **Note:** Single dependency mode focuses on coding specs. Run full `/sync-stack` to regenerate architecture/design/documentation specs.
+
+## Migrating Specs to a Tracked Location
+
+When run as `/sync-stack --migrate-specs`, this mode moves a project from the legacy spec layout (everything under `.claude/specs/`) to the new layout where curated project specs live under `<project_specs_root>/` and only kit-owned specs stay under `.claude/specs/`.
+
+Use this mode when:
+- You're in client mode and want curated specs to commit to the project repo.
+- You want project specs to travel with code commits in any mode.
+- You're recovering a project where `.claude/specs/` was lost.
+
+### Step 1: Detect Current Layout
+
+```bash
+ls .claude/specs/architecture/ .claude/specs/design/ .claude/specs/config/ \
+   .claude/specs/coding/ .claude/specs/components/ 2>/dev/null
+```
+
+If none of these exist, there's nothing to migrate. Stop and inform the user.
+
+### Step 2: Confirm Target Root
+
+Resolve `PROJECT_SPECS_ROOT` with the same logic as STEP 0. Then show the user:
+
+```
+MIGRATION PLAN
+
+Source: .claude/specs/{architecture, design, config, coding, components}/
+Target: <project_specs_root>/...
+
+Files to move (using git mv to preserve history):
+[enumerate every file under the legacy subtrees]
+
+Files that STAY at .claude/specs/:
+- kit/*
+- lenses/*
+- claude-code/*
+- design/craft.md
+- stack-config.yaml
+
+Stack-config.yaml file: paths will be rewritten to project-root-relative.
+
+A README.md will be created at <project_specs_root>/ explaining the convention.
+
+Proceed? (yes / customize root / cancel)
+```
+
+WAIT FOR USER RESPONSE.
+
+### Step 3: Execute Migration
+
+For each file in the legacy subtrees:
+
+```bash
+mkdir -p "$PROJECT_SPECS_ROOT/<subdir>"
+git mv ".claude/specs/<subdir>/<file>" "$PROJECT_SPECS_ROOT/<subdir>/<file>"
+```
+
+`git mv` preserves history. If the project is in client mode and `.claude/` is in `.git/info/exclude`, `git mv` reports "did not match any files" because the original files were never tracked. Fall back to plain `mv`:
+
+```bash
+mv ".claude/specs/<subdir>/<file>" "$PROJECT_SPECS_ROOT/<subdir>/<file>"
+```
+
+This is the expected path for client-mode migrations: the originals were never tracked, so there's no history to preserve.
+
+After moves, rewrite `stack-config.yaml`: every `file:` entry that pointed at a moved file gets prefixed with `$PROJECT_SPECS_ROOT/`. Use a YAML-aware rewrite (Node or python3), not sed, to avoid mangling the file.
+
+```
+# Before: file: architecture/decisions.md
+# After:  file: docs/specs/architecture/decisions.md
+```
+
+### Step 4: Write Config and README
+
+Write `.claude/specs.yaml` with the chosen `project_specs_root`. Write the README at the target root if it doesn't exist (same content as init-project STEP 5.0).
+
+### Step 5: Verify
+
+```bash
+# All moved files exist at the new path; no stale .claude/specs/<moved-subdir>/ remain.
+echo '{"tool_input":{"file_path":"src/example.ts"}}' | \
+  node .claude/hooks/context/enforce-specs.cjs
+# Should list specs from BOTH .claude/specs/ and project_specs_root/
+```
+
+Report:
+
+```
+MIGRATION COMPLETE
+
+Moved N files from .claude/specs/ to <project_specs_root>/.
+Updated stack-config.yaml with N rewritten paths.
+Wrote .claude/specs.yaml and <project_specs_root>/README.md.
+
+Next steps in CLIENT-MODE projects:
+- Run `git status` — moved files now appear as new tracked files in the project repo.
+- Commit them with the next related code change.
+
+Next steps in PERSONAL projects:
+- Nothing extra. The new layout is already live.
+```
+
+Migration is idempotent: a second run detects no legacy subtrees and reports "nothing to migrate."
 
 ## Adding Custom Project Specs
 

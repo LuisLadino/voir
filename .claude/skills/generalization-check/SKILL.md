@@ -1,7 +1,7 @@
 ---
 name: generalization-check
 description: >
-  Test the AI component on inputs it wasn't built for before claiming it works. Trigger on "it works", "this works now", "tested it", "passes the test", "ship it", "ready", "good to go", "confirmed working", "looks good to me", "that fixed it". Forces a distribution-shift pass across adversarial variations, out-of-scope inputs, and near-miss triggers, to expose brittle pattern-matching before it ships.
+  Test AI on inputs it wasn't built for. Triggers: "it works", "tested it", "passes the test", "ship it", "ready", "that fixed it". Distribution-shift pass across adversarial inputs.
 ---
 
 # Generalization Check

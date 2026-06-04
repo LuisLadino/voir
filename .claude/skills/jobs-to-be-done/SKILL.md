@@ -1,7 +1,7 @@
 ---
 name: jobs-to-be-done
 description: >
-  Reframe the problem as a job the user hires a product to do, in Christensen's sense. Trigger on "who's it for", "what's the user need", "what problem does this solve", "why would someone use this", "target user", "user need", "who uses this", "is there a need", "does anyone want this". Forces a job-story with context, progress, and hire-reason before scoping the solution.
+  Reframe the problem as a job the user hires the product for. Triggers: "user need", "target user", "what problem does this solve", "is there a need". Job-story: context, progress, hire-reason.
 ---
 
 # Jobs to Be Done

@@ -1,7 +1,7 @@
 ---
 name: stakeholder-map
 description: >
-  Map who is affected and what they need before pushing for alignment. Trigger on "get buy-in", "align on this", "who needs to approve", "sell this", "pitch this", "convince", "push back", "stakeholders", "make the case", "who should I talk to", or any situation where Luis needs influence without direct authority. Forces explicit interest-and-power mapping so outreach targets the right people in the right order.
+  Map who is affected and what they need before alignment. Triggers: "get buy-in", "align on this", "who needs to approve", "sell this", "convince", "make the case". Interest-and-power map.
 ---
 
 # Stakeholder Map

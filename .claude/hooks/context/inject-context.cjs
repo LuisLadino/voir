@@ -68,7 +68,7 @@ function handleHook(data) {
   }
 
   // 5. Check spec triggers
-  const specResult = specTriggers.check(prompt);
+  const specResult = specTriggers.check(prompt, session_id);
   if (specResult.content) {
     contextParts.push(...specResult.content);
     actions.specsLoaded = specResult.specsLoaded;
@@ -83,7 +83,7 @@ function handleHook(data) {
   }
 
   // 7. Check lens router
-  const lensResult = lensRouter.check(prompt);
+  const lensResult = lensRouter.check(prompt, session_id);
   if (lensResult.content) {
     contextParts.push(lensResult.content);
     actions.lensesFired = lensResult.fired;

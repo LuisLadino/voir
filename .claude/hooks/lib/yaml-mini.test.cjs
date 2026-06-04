@@ -68,6 +68,18 @@ test('block scalar preserves newlines and trailing newline (clip chomping)', () 
   assert.deepStrictEqual(parse(yaml), { rules: 'line one\nline two\nline three\n' });
 });
 
+test('folded scalar collapses single newlines to spaces', () => {
+  const yaml = 'description: >\n  one\n  two\n  three\n';
+  assert.deepStrictEqual(parse(yaml), { description: 'one two three\n' });
+});
+
+test('folded scalar preserves blank lines as paragraph breaks', () => {
+  const yaml = 'description: >\n  para one line one\n  para one line two\n\n  para two\n';
+  assert.deepStrictEqual(parse(yaml), {
+    description: 'para one line one para one line two\npara two\n'
+  });
+});
+
 test('block scalar with blank line inside', () => {
   const yaml = 'rules: |\n  para one\n\n  para two\n';
   assert.deepStrictEqual(parse(yaml), { rules: 'para one\n\npara two\n' });
@@ -94,6 +106,25 @@ test('sequence item with plain unquoted match', () => {
   const yaml = 'paths:\n  - match: README.md\n    voice: none\n';
   assert.deepStrictEqual(parse(yaml), {
     paths: [{ match: 'README.md', voice: 'none' }]
+  });
+});
+
+test('sequence of scalar strings', () => {
+  const yaml = 'applies_to:\n  - "**/*.tsx"\n  - "**/*.jsx"\n';
+  assert.deepStrictEqual(parse(yaml), {
+    applies_to: ['**/*.tsx', '**/*.jsx']
+  });
+});
+
+test('sequence of unquoted scalars', () => {
+  const yaml = 'tags:\n  - foo\n  - bar\n';
+  assert.deepStrictEqual(parse(yaml), { tags: ['foo', 'bar'] });
+});
+
+test('sequence mixing scalars and maps in one list', () => {
+  const yaml = 'items:\n  - "scalar"\n  - key: value\n    other: x\n';
+  assert.deepStrictEqual(parse(yaml), {
+    items: ['scalar', { key: 'value', other: 'x' }]
   });
 });
 
@@ -206,6 +237,34 @@ test('matches yaml package output for voice.yaml', () => {
   const mine = parse(text);
   const theirs = YAML.parse(text);
   assert.deepStrictEqual(mine, theirs, 'yaml-mini output must match yaml package for voice.yaml');
+});
+
+test('flow sequence of plain scalars', () => {
+  assert.deepStrictEqual(parse('triggers: [commit, git, push]\n'), { triggers: ['commit', 'git', 'push'] });
+});
+
+test('empty flow sequence is an empty array', () => {
+  assert.deepStrictEqual(parse('applies_to: []\n'), { applies_to: [] });
+});
+
+test('flow sequence keeps commas inside quoted items', () => {
+  assert.deepStrictEqual(parse('k: ["a,b", c]\n'), { k: ['a,b', 'c'] });
+});
+
+test('flow sequence trims whitespace and tolerates a trailing comma', () => {
+  assert.deepStrictEqual(parse('k: [ a , b , ]\n'), { k: ['a', 'b'] });
+});
+
+test('quoted value opening with a bracket stays a string', () => {
+  assert.deepStrictEqual(parse('k: "[literal]"\n'), { k: '[literal]' });
+});
+
+test('unterminated bracket is a plain scalar, not a sequence', () => {
+  assert.deepStrictEqual(parse('k: [a\n'), { k: '[a' });
+});
+
+test('flow sequence with a null item', () => {
+  assert.deepStrictEqual(parse('k: [a, null, b]\n'), { k: ['a', null, 'b'] });
 });
 
 console.log(`\n${passed} passed, ${failed} failed`);

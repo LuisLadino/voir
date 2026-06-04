@@ -77,6 +77,36 @@ excludes:
   - "**/*.bundle.css"
   - ".claude/**"
 category: design
+conformance_rules:
+  - name: pure-black-or-white-literal
+    pattern: '#(?:000|fff|000000|ffffff)\b'
+    message: |
+      Pure #000 or #fff literal. craft.md "Color > Bans" forbids these in UI code — use the project's off-black / off-white token, or an oklch() value tinted toward the brand hue.
+    applies_to:
+      - "**/*.tsx"
+      - "**/*.jsx"
+      - "**/*.vue"
+      - "**/*.svelte"
+      - "**/*.astro"
+      - "**/*.html"
+      - "**/*.htm"
+  - name: gradient-text-clip
+    pattern: 'background-clip:\s*text'
+    message: |
+      `background-clip: text` is the top AI design tell when paired with a gradient. craft.md "Color > Bans" forbids gradient text — use weight or size for emphasis, solid colors for text.
+    applies_to:
+      - "**/*.css"
+      - "**/*.scss"
+      - "**/*.sass"
+      - "**/*.less"
+      - "**/*.styl"
+      - "**/*.stylus"
+      - "**/*.pcss"
+      - "**/*.postcss"
+      - "**/*.tsx"
+      - "**/*.jsx"
+      - "**/*.vue"
+      - "**/*.svelte"
 ---
 
 # Design Craft

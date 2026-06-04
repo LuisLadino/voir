@@ -1,3 +1,5 @@
+// @kit-internal — required by inject-context.cjs
+
 /**
  * Lens Router Module
  *
@@ -67,7 +69,7 @@ function buildDirective(matches) {
   return lines.join('\n\n');
 }
 
-function check(prompt) {
+function check(prompt, sessionId) {
   if (!prompt || typeof prompt !== 'string') {
     return { content: null, fired: [] };
   }
@@ -77,7 +79,7 @@ function check(prompt) {
     return { content: null, fired: [] };
   }
 
-  const currentPhase = inferCurrentPhase();
+  const currentPhase = inferCurrentPhase(undefined, sessionId);
   const matches = findMatches(prompt, registry, currentPhase);
   if (matches.length === 0) {
     return { content: null, fired: [], phase: currentPhase };
@@ -97,7 +99,7 @@ module.exports = { check };
 if (require.main === module) {
   const { runStdinHook } = require('../lib/stdin-hook.cjs');
   runStdinHook((data) => {
-    const result = check(data.prompt || '');
+    const result = check(data.prompt || '', data.session_id);
     if (result.content) {
       console.log(JSON.stringify({
         hookSpecificOutput: {

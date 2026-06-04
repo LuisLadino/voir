@@ -1,7 +1,7 @@
 ---
 name: roi-per-hour
 description: >
-  Test whether the work is worth Luis's time before committing hours to it. Trigger on "worth my time", "is this worth doing", "should I spend time", "worth the effort", "how do I prioritize", "what's the ROI", "worth building", "worth pursuing", "bang for the buck", "opportunity cost". Forces an explicit unit-economics pass on Luis-hours in versus value out, so effort doesn't get silently hired by low-return work.
+  Is the work worth Luis's time before committing hours. Triggers: "worth my time", "worth doing", "worth the effort", "what's the ROI", "bang for the buck", "opportunity cost". Unit-economics pass.
 ---
 
 # ROI Per Hour

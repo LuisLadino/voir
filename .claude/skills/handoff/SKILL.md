@@ -1,9 +1,7 @@
 ---
 name: handoff
 description: >
-  Capture session context for continuity. Use when: the user says "handoff",
-  "let's handoff", "end session", "save context", "I'm done for now",
-  "wrapping up", "switching context", or indicates they're ending work.
+  Capture session context for cross-session continuity. Triggers: "handoff", "end session", "save context", "wrapping up", "switching context". Writes summary, runs /dream, files follow-ups.
 allowed-tools: Read, Write, Bash
 ---
 

@@ -24,8 +24,10 @@ const {
   readPromptScopedState,
   readSessionScopedSpecState,
   readPromptScopedTrackingState,
+  readSkillTelemetryState,
   getRecentTrackingState,
   getRecentPromptScopedTrackingState,
+  getRecentSkillTelemetryState,
   getSessionTrackingPath,
   _resetRecentStateCache
 } = require('../lib/session-utils.cjs');
@@ -92,6 +94,53 @@ function runTests() {
 
   console.log(`Test workspace: ${workspacePath}`);
   console.log(`Session: ${sessionId}`);
+
+  // classifyFailure: pure-function tests for the failureKind discriminator.
+  // Establishes that grep no-match and friends classify as nonzero_exit while
+  // genuine errors classify as tool_error.
+  const { classifyFailure } = require('./classify-failure.cjs');
+
+  const cf = (tool, command) => classifyFailure(tool, { command });
+
+  report('classifyFailure: non-Bash tool always tool_error',
+    classifyFailure('Read', { file_path: '/tmp/missing' }) === 'tool_error');
+  report('classifyFailure: MCP tool always tool_error',
+    classifyFailure('mcp__claude_ai_Gmail__search_threads', {}) === 'tool_error');
+  report('classifyFailure: empty command tool_error',
+    cf('Bash', '') === 'tool_error');
+  report('classifyFailure: missing tool_input tool_error',
+    classifyFailure('Bash', undefined) === 'tool_error');
+
+  // Allowlisted bins
+  report('classifyFailure: grep no-match nonzero_exit',
+    cf('Bash', 'grep -r "needle" haystack/') === 'nonzero_exit');
+  report('classifyFailure: rg no-match nonzero_exit',
+    cf('Bash', 'rg --files-with-matches foo .') === 'nonzero_exit');
+  report('classifyFailure: diff with differences nonzero_exit',
+    cf('Bash', 'diff a.txt b.txt') === 'nonzero_exit');
+
+  // Last-segment-of-pipeline rule
+  report('classifyFailure: pipeline ending in grep nonzero_exit',
+    cf('Bash', 'cat file.txt | grep needle') === 'nonzero_exit');
+  report('classifyFailure: pipeline ending in non-allowlisted bin tool_error',
+    cf('Bash', 'grep needle file.txt | wc -l') === 'tool_error');
+
+  // Genuine errors
+  report('classifyFailure: gh CLI failure tool_error',
+    cf('Bash', 'gh pr create --title "x" --body-file /tmp/') === 'tool_error');
+  report('classifyFailure: dispatch dry-run constraint tool_error',
+    cf('Bash', 'node .claude/hooks/lib/dispatch.cjs --dry-run 1 2 3 4 5 6') === 'tool_error');
+  report('classifyFailure: missing-file Read tool_error',
+    classifyFailure('Read', { file_path: '/tmp/missing-file.md' }) === 'tool_error');
+
+  // VAR=val prefixes ignored
+  report('classifyFailure: VAR=val grep nonzero_exit',
+    cf('Bash', 'GREP_OPTIONS= grep needle file.txt') === 'nonzero_exit');
+
+  // Path-stripped binary
+  report('classifyFailure: /usr/bin/grep nonzero_exit',
+    cf('Bash', '/usr/bin/grep -E foo file.txt') === 'nonzero_exit');
+
   console.log(`Spawning ${WORKERS} workers x ${EVENTS_PER_WORKER} events = ${WORKERS * EVENTS_PER_WORKER} total events\n`);
 
   const children = [];
@@ -368,6 +417,139 @@ function runTests() {
         fourth === null,
         `expected null, got ${fourth === null ? 'null' : 'non-null'}`
       );
+
+      // #347: per-skill telemetry rollup (OpenSpace shape).
+      const stA = sessionId + '-skill-a';
+      appendTrackingEvent(stA, { type: 'prompt_start' }, workspacePath);
+      appendTrackingEvent(stA, { type: 'skill_invocation', skill: 'research', source: 'slash_command' }, workspacePath);
+      appendTrackingEvent(stA, { type: 'tool', tool: 'WebSearch', query: 'x' }, workspacePath);
+      appendTrackingEvent(stA, { type: 'tool', tool: 'Read', file: 'foo.md' }, workspacePath);
+      const recA = readSkillTelemetryState(stA, workspacePath);
+      report(
+        '#347 A: research+WebSearch is completed, applied, no fallback, 2 tool successes',
+        recA.length === 1 &&
+        recA[0].skill_name === 'research' &&
+        recA[0].completed === true &&
+        recA[0].fallback_used === false &&
+        recA[0].tool_success_count === 2 &&
+        recA[0].source === 'slash_command' &&
+        recA[0].registered === true &&
+        recA[0].exempt === false,
+        `got ${JSON.stringify(recA)}`
+      );
+
+      const stB = sessionId + '-skill-b';
+      appendTrackingEvent(stB, { type: 'prompt_start' }, workspacePath);
+      appendTrackingEvent(stB, { type: 'skill_invocation', skill: 'research', source: 'slash_command' }, workspacePath);
+      appendTrackingEvent(stB, { type: 'tool', tool: 'Read', file: 'a.md' }, workspacePath);
+      appendTrackingEvent(stB, { type: 'skill_invocation', skill: 'commit', source: 'slash_command' }, workspacePath);
+      appendTrackingEvent(stB, { type: 'tool', tool: 'Bash', command: 'git push origin main' }, workspacePath);
+      const recB = readSkillTelemetryState(stB, workspacePath);
+      report(
+        '#347 B: research incomplete + commit complete → research.fallback_used',
+        recB.length === 2 &&
+        recB[0].skill_name === 'research' &&
+        recB[0].completed === false &&
+        recB[0].fallback_used === true &&
+        recB[1].skill_name === 'commit' &&
+        recB[1].completed === true,
+        `got ${JSON.stringify(recB)}`
+      );
+
+      const stC = sessionId + '-skill-c';
+      appendTrackingEvent(stC, { type: 'prompt_start' }, workspacePath);
+      appendTrackingEvent(stC, { type: 'skill_invocation', skill: 'define', source: 'slash_command' }, workspacePath);
+      const recC = readSkillTelemetryState(stC, workspacePath);
+      report(
+        '#347 C: exempt skill (define) is completed with no tools',
+        recC.length === 1 && recC[0].completed === true && recC[0].exempt === true && recC[0].tool_success_count === 0,
+        `got ${JSON.stringify(recC)}`
+      );
+
+      const stD = sessionId + '-skill-d';
+      appendTrackingEvent(stD, { type: 'prompt_start' }, workspacePath);
+      appendTrackingEvent(stD, { type: 'skill_invocation', skill: 'novel-unregistered', source: 'slash_command' }, workspacePath);
+      appendTrackingEvent(stD, { type: 'tool', tool: 'Bash', command: 'git push' }, workspacePath);
+      const recD = readSkillTelemetryState(stD, workspacePath);
+      report(
+        '#347 D: unknown skill registered=false, completed=false (tripwire)',
+        recD.length === 1 && recD[0].registered === false && recD[0].completed === false,
+        `got ${JSON.stringify(recD)}`
+      );
+
+      const stE = sessionId + '-skill-e';
+      appendTrackingEvent(stE, { type: 'prompt_start' }, workspacePath);
+      appendTrackingEvent(stE, { type: 'skill_invocation', skill: 'research', source: 'slash_command' }, workspacePath);
+      appendTrackingEvent(stE, { type: 'tool', tool: 'WebSearch', query: 'x' }, workspacePath);
+      appendTrackingEvent(stE, { type: 'failure', tool: 'WebFetch', error: 'timeout' }, workspacePath);
+      appendTrackingEvent(stE, { type: 'failure', tool: 'Bash', error: 'exit 1' }, workspacePath);
+      const recE = readSkillTelemetryState(stE, workspacePath);
+      report(
+        '#347 E: failures count as tool_failure_count, successes separate',
+        recE.length === 1 && recE[0].tool_success_count === 1 && recE[0].tool_failure_count === 2 && recE[0].completed === true,
+        `got ${JSON.stringify(recE)}`
+      );
+
+      const stF = sessionId + '-skill-f';
+      appendTrackingEvent(stF, { type: 'prompt_start' }, workspacePath);
+      appendTrackingEvent(stF, { type: 'tool', tool: 'Skill', skill: 'commit' }, workspacePath);
+      appendTrackingEvent(stF, { type: 'tool', tool: 'Bash', command: 'git push origin main' }, workspacePath);
+      const recF = readSkillTelemetryState(stF, workspacePath);
+      report(
+        '#347 F: Skill-tool window has source=skill_tool, opener not counted',
+        recF.length === 1 && recF[0].source === 'skill_tool' && recF[0].skill_name === 'commit' && recF[0].tool_success_count === 1,
+        `got ${JSON.stringify(recF)}`
+      );
+
+      const stG = sessionId + '-skill-g';
+      appendTrackingEvent(stG, { type: 'prompt_start' }, workspacePath);
+      appendTrackingEvent(stG, { type: 'skill_invocation', skill: 'research', source: 'slash_command' }, workspacePath);
+      appendTrackingEvent(stG, { type: 'tool', tool: 'WebSearch', query: 'turn-1' }, workspacePath);
+      appendTrackingEvent(stG, { type: 'prompt_start' }, workspacePath);
+      appendTrackingEvent(stG, { type: 'skill_invocation', skill: 'commit', source: 'slash_command' }, workspacePath);
+      appendTrackingEvent(stG, { type: 'tool', tool: 'Bash', command: 'git push origin main' }, workspacePath);
+      const recG = readSkillTelemetryState(stG, workspacePath);
+      report(
+        '#347 G: prompt_start resets scope — only current-prompt records',
+        recG.length === 1 && recG[0].skill_name === 'commit',
+        `got ${JSON.stringify(recG)}`
+      );
+
+      const stH = sessionId + '-skill-h';
+      appendTrackingEvent(stH, { type: 'prompt_start' }, workspacePath);
+      appendTrackingEvent(stH, { type: 'skill_invocation', skill: 'project-management:sync-stack', source: 'slash_command' }, workspacePath);
+      const recH = readSkillTelemetryState(stH, workspacePath);
+      report(
+        '#347 H: namespaced skill normalizes to bare name, exempt',
+        recH.length === 1 && recH[0].skill_name === 'sync-stack' && recH[0].completed === true && recH[0].exempt === true,
+        `got ${JSON.stringify(recH)}`
+      );
+
+      const stI = sessionId + '-skill-i';
+      appendTrackingEvent(stI, { type: 'skill_invocation', skill: 'research', source: 'slash_command' }, workspacePath);
+      appendTrackingEvent(stI, { type: 'tool', tool: 'WebSearch', query: 'x' }, workspacePath);
+      const recI = readSkillTelemetryState(stI, workspacePath);
+      report(
+        '#347 I: no prompt_start returns empty array (no scope)',
+        Array.isArray(recI) && recI.length === 0,
+        `got ${JSON.stringify(recI)}`
+      );
+
+      _resetRecentStateCache();
+      const skillCacheWorkspace = fs.mkdtempSync(path.join(os.tmpdir(), 'skill-tel-'));
+      const skillCacheSid = `skill-recent-${Date.now()}`;
+      appendTrackingEvent(skillCacheSid, { type: 'prompt_start' }, skillCacheWorkspace);
+      appendTrackingEvent(skillCacheSid, { type: 'skill_invocation', skill: 'research', source: 'slash_command' }, skillCacheWorkspace);
+      appendTrackingEvent(skillCacheSid, { type: 'tool', tool: 'WebSearch', query: 'recent' }, skillCacheWorkspace);
+      const recentSkill = getRecentSkillTelemetryState(skillCacheWorkspace);
+      report(
+        '#347 J: getRecentSkillTelemetryState resolves and reduces',
+        recentSkill !== null && recentSkill.length === 1 && recentSkill[0].skill_name === 'research',
+        recentSkill === null ? 'returned null' : `got ${JSON.stringify(recentSkill)}`
+      );
+      const recentSkill2 = getRecentSkillTelemetryState(skillCacheWorkspace);
+      report('#347 J: getRecentSkillTelemetryState cache returns same reference', recentSkill === recentSkill2);
+      fs.rmSync(skillCacheWorkspace, { recursive: true, force: true });
 
       fs.rmSync(cacheWorkspace, { recursive: true, force: true });
       fs.rmSync(workspacePath, { recursive: true, force: true });

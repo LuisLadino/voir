@@ -91,6 +91,8 @@ Blocks:
 - Credential exposure (`cat .env`, echo secrets)
 - Fork bombs, filesystem formats
 
+OWASP mapping: covers OWASP Tool Misuse subset. See `.claude/specs/kit/block-dangerous.md` and `.claude/specs/kit/owasp-mapping.md`.
+
 #### enforce-skills.cjs
 **Event:** PreToolUse (Bash)
 **Purpose:** Blocks `git commit` — must use /commit skill
@@ -189,6 +191,22 @@ If found, blocks stopping and asks Claude to clean up.
 #### spawn-phase-evaluator.cjs
 **Event:** UserPromptSubmit
 **Purpose:** Detects new commits and spawns phase-evaluator agent for project health evaluation
+
+## Registration drift check
+
+`settings.template.json` is the source of truth for Claude Code hook registrations. `.claude/hooks/registration-drift.test.cjs` enforces that the template and the filesystem stay in sync.
+
+**Two checks:**
+
+1. Every `node .claude/hooks/.../foo.cjs` command in `settings.template.json` must resolve to an existing file. Fails if a hook was deleted or renamed without updating the template.
+2. Every `.cjs` file under `.claude/hooks/` (excluding `lib/` and `*.test.cjs`) must either appear in the template OR carry a `// @kit-internal` marker in its first 30 lines. Fails if a hook lands in the kit but never gets registered, which is the silent-failure mode #126 was filed against.
+
+**When you add a new hook:**
+
+- Top-level hook (Claude Code invokes it directly on a lifecycle event): add the registration to `settings.template.json` and run `./setup-kit.sh` to install it locally.
+- Internal hook (required by another hook, or spawned by a skill/script): add `// @kit-internal — <caller>` to the file header.
+
+The test runs in CI on every PR via `npm test`, and locally via `node .claude/hooks/registration-drift.test.cjs`.
 
 ## Debugging
 
