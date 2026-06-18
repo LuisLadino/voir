@@ -124,8 +124,8 @@ Always a single markdown table, grouped by severity. No list format.
 | Suggested | `src/ui/Button.tsx:15` | no `:active` state | `transform: scale(0.97)` on `:active` | Craft floor: buttons should feel responsive |
 
 **Severity rules:**
-- **Blocking**: violates project direction spec OR `.claude/specs/design/craft/correctness.md` rules like `prefers-reduced-motion`, hardware-accelerated properties, touch-device hover gating, WCAG contrast, semantic HTML. Must be fixed before ship.
-- **Suggested**: craft floor from the other design specs. Apply where project spec is silent. User decides.
+- **Blocking**: violates project direction spec OR the Correctness rules in `.claude/specs/design/craft.md` like `prefers-reduced-motion`, hardware-accelerated properties, touch-device hover gating, WCAG contrast, semantic HTML. Must be fixed before ship.
+- **Suggested**: craft floor from the other sections of `craft.md` (anti-slop, color, typography, layout, motion). Apply where project spec is silent. User decides.
 
 If there are no issues, say so plainly. Do not invent problems.
 
@@ -144,7 +144,7 @@ This skill does not block commits on its own. `verify-before-stop` and the other
 
 ## Sources
 
-Craft floor rules under `.claude/specs/design/craft/` are adapted from:
+Craft floor rules in `.claude/specs/design/craft.md` are adapted from:
 - Emil Kowalski, `github.com/emilkowalski/skill`
 - Paul Bakaus, `github.com/pbakaus/impeccable`
 - Leon, `github.com/Leonxlnx/taste-skill`

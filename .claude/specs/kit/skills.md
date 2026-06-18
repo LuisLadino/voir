@@ -20,7 +20,7 @@ Skill descriptions are the only thing Claude sees when deciding whether to fire 
 Count bytes of the description body, not the YAML wrapping. Use:
 
 ```bash
-python3 -c "import re,sys; t=open(sys.argv[1]).read(); m=re.search(r'description:\s*(.*?)(?=\n[a-z_]+:|\Z)', re.search(r'^---\n(.*?)\n---', t, re.DOTALL).group(1), re.DOTALL); d=m.group(1).strip(); print(len(re.sub(r'\s+',' ',d[1:].strip()) if d.startswith('>') else d))" path/to/SKILL.md
+python3 -c "import re,sys; t=open(sys.argv[1]).read(); m=re.search(r'description:\s*(.*?)(?=\n[\w-]+:|\Z)', re.search(r'^---\n(.*?)\n---', t, re.DOTALL).group(1), re.DOTALL); d=m.group(1).strip(); print(len(re.sub(r'\s+',' ',d[1:].strip()) if d.startswith('>') else d))" path/to/SKILL.md
 ```
 
 ## Required Structure
@@ -76,6 +76,8 @@ Store eval sets in `.claude/research/skill-trigger-evals/<skill-name>.md`:
 - "phrase 2" (vs adjacent skill Y)
 ```
 
+Write should-fire phrases in the form the skill actually fires on. For an action skill, that is a command, not a query. "capture this project's architectural invariants" fires reliably; "what are the architectural invariants of this project?" reads as a request to *list* what already exists and routes to the skill only ~1/3 of the time. A phrase that hovers near a 50% fire rate is not a flaky harness — it is a mis-classified test case, and it flips PASS/FAIL between runs of 3. Fix the phrase to match how the skill is really invoked; do not raise the run count to paper over a borderline phrase. The walk verdict is also model-specific — the harness prints the model it used, and a phrase can fire on one model and not another.
+
 ## Skill Addition Gate
 
 A new skill PR must include:
@@ -84,18 +86,18 @@ A new skill PR must include:
 2. Golden eval file at `.claude/research/skill-trigger-evals/<name>.md`.
 3. Statement of overlap analysis: which existing skills share trigger space, and why this skill is distinct.
 
-PR review: walk the eval set in a clean Claude Code session. Skill must fire on every should-fire phrase and not fire on any should-not-fire phrase. Document residual gaps as follow-up issues.
+PR review: run `/skill-gate <name>`. It runs all three items above — byte budget, overlap, and the trigger walk — and emits one verdict. The walk fires the installed skill against its golden eval via `.claude/scripts/skill-trigger-walk.cjs`, running each phrase 3× and requiring the skill to fire on every should-fire phrase and stay silent on every should-not-fire phrase. Do not reach for skill-creator's `run_eval.py`: it keys detection on a fabricated temp command name and bails on the first non-Skill tool, so it returns false negatives for any already-installed skill in a hook-heavy project. A walk miss is a real routing defect, not a harness artifact. Document residual gaps as follow-up issues.
 
 ## Stub Scaffolds
 
-`/init-project` Step 6.7 scaffolds a stub for each project-specific skill it identifies. A stub is pre-gate. It ships with `disable-model-invocation: true` so its placeholder description stays out of the routing budget, plus a checklist of the gate items above. A stub is not a shipped skill. It clears the gate only when its author writes a real ≤200-byte three-part description, adds the golden eval, removes `disable-model-invocation`, and walks the eval set clean in a fresh session.
+`/init-project` Step 6.7 scaffolds a stub for each project-specific skill it identifies. A stub is pre-gate. It ships with `disable-model-invocation: true` so its placeholder description stays out of the routing budget, plus a checklist of the gate items above. A stub is not a shipped skill. It clears the gate only when its author writes a real ≤200-byte three-part description, adds the golden eval, removes `disable-model-invocation`, and clears `/skill-gate <name>`.
 
 ## Validation
 
-After any description change, verify in a fresh session:
+After any description change:
 
 1. Open Claude Code, observe the available-skills list in the system reminder.
 2. Confirm no kit skill loads without description.
-3. For changed skills, type the should-fire phrases and confirm the Skill tool fires the right skill.
+3. For changed skills, run `/skill-gate <name>` to walk the golden eval against the installed kit.
 
 A drop with the description visible but never firing is the same failure mode as a drop without the description. Both make the skill invisible.

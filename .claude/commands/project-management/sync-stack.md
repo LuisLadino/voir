@@ -23,12 +23,15 @@ description: Wire project together, verify setup, generate project specs. Handle
 
 ## Core Principle
 
-**All spec categories are treated the same.** Coding specs, config specs, architecture specs - all get:
-1. Verified against official docs (context7 or official sites)
-2. Populated with real content, not placeholders
-3. If not configured, prompt to set it up
+**Produce the documentation a new developer needs to work in THIS project without breaking it** — held to the universal engineering principles every project inherits (`kit/engineering-principles.md`). The high-value docs are the ones a competent dev cannot get from a library's official docs: this codebase's architecture, conventions, and load-bearing invariants.
 
-No category is "just project conventions" that skips verification.
+Rank generated output by value:
+
+1. **Project reality (HIGH).** Architecture, conventions, and the load-bearing invariants — the unwritten rules a new dev breaks on day one. Captured by **interview** via `capture-invariants`, not by scanning transitional code. Emitted as specs plus `conformance_rules` for the mechanizable subset.
+2. **Non-obvious cross-tech constraints (MEDIUM).** Gotchas that live in no single library's docs — an Astro+React hydration trap, a Prisma+serverless connection limit. Keep these.
+3. **Generic library patterns (LOW).** The dev already knows React, FastAPI, Tailwind. Do not dump these; defer to the engineering principles and the project's own conventions.
+
+The test for any generated content: **would a competent developer already know this, or discover it by reading the code?** If yes, it does not belong here. Capture what they cannot discover independently — the project's decisions, not the framework's API.
 
 ## What This Does
 
@@ -43,15 +46,15 @@ No category is "just project conventions" that skips verification.
 - Ensures build pipeline will work
 
 ### 3. Spec Generation
-Researches your stack via context7 and generates specs with **real patterns from official docs**. This applies to ALL categories - coding, config, architecture, design.
+Generates the project-reality docs a new dev needs, ranked by value (see Core Principle). The HIGH-value layer — architecture, conventions, invariants — is captured by **interview** via `capture-invariants`, not scraped from official docs. Library research is a stack-specific add, scoped to non-obvious cross-tech constraints only.
 
 | Category | What it contains | Source |
 |----------|------------------|--------|
-| `coding/` | Language and library patterns | Official docs (React, TS, etc.) |
-| `architecture/` | File structure, system map | Framework docs + detected config |
-| `design/` | Implementation patterns for design system | Styling framework docs |
-| `documentation/` | Code comments, docstrings | Language conventions (TSDoc, etc.) |
-| `config/` | Git, testing, deployment, env | Detected from project files |
+| `coding/` | This project's conventions + load-bearing invariants | Interview (`capture-invariants`); not generic library patterns |
+| `architecture/` | Component invariants + system map (change-impact) | Interview + structure scan |
+| `config/` | Git, testing, deployment, env — the project's actual setup | Detected from project files, or skipped |
+| `design/` | Implementation patterns for the design system | Project's design decisions |
+| `documentation/` | Docstring/comment conventions this project follows | Project conventions |
 
 ### 4. Wiring Diagram
 Generates `.claude/specs/architecture/system-map.yaml` showing:
@@ -334,35 +337,18 @@ Don't just look up "how to use [technology]." Research these specific angles:
 - **Known issues:** What are the common "why isn't this working" problems?
 - **Anti-patterns with explanations:** Not just "don't do X" but "don't do X because Y happens at runtime"
 
-### Extract from research (categorized by spec type):
+### Extract from research (the non-obvious only)
 
-**For coding specs — API patterns:**
-- Component/function patterns
-- Import style
-- Error handling patterns
-- Common gotchas to avoid
+The dev already knows the framework's API. Extract only what they cannot get from official docs or by reading the code — the operational knowledge that lives in GitHub issues and dev blogs, not the API reference.
 
-**For coding specs — Runtime behavior:**
-- **Lifecycle:** What happens from initialization to interactive? (e.g., Astro: SSR renders HTML → CSS applies → scripts load → framework hydrates → components become interactive)
-- **SSR/SSG behavior:** If the technology involves server rendering, what HTML does the browser receive? What inline styles or attributes are added during server render? What changes after client JS executes?
-- **Execution order:** When do scripts run? What's synchronous vs asynchronous? What blocks rendering?
-- **Side effects:** What does the technology do that isn't obvious from the API? (e.g., Motion's `initial` prop renders as inline CSS during SSR, making content invisible before JS loads)
-- **Conditional behavior:** Under what conditions does the technology behave differently? (e.g., `client:visible` uses IntersectionObserver — element must be visible in the viewport, not just in the DOM)
+**Runtime behavior and cross-tech gotchas (the high-value extraction):**
+- **Lifecycle:** initialization to interactive (e.g., Astro: SSR renders HTML → CSS applies → scripts load → framework hydrates).
+- **SSR/SSG behavior:** what HTML the browser receives before JS executes; what inline styles or attributes appear during server render.
+- **Side effects:** what the technology does that the API doesn't reveal (e.g., Motion's `initial` prop renders as inline CSS during SSR, making content invisible before JS loads).
+- **Conditional behavior:** when it behaves differently (e.g., `client:visible` uses IntersectionObserver — the element must be in the viewport, not just the DOM).
+- **Version-specific changes:** what changed in the version this project pins.
 
-**For architecture specs:**
-- File/folder conventions
-- Project structure requirements
-- Module organization
-
-**For design specs:**
-- Design token patterns (if using Tailwind, styled-components, etc.)
-- Component styling conventions
-- Theme structure
-
-**For documentation specs:**
-- Code comment conventions
-- Docstring formats
-- README patterns
+**Do not extract generic API patterns** — component/function signatures, import style, "how to call X." The dev knows these; the engineering principles and the project's own invariants (STEP 9) govern how code is written here. Library file/folder conventions are likewise derivable by reading the code.
 
 ## STEP 5b: Cross-Technology Interaction Constraints
 
@@ -469,7 +455,7 @@ find . -name "*.test.*" -o -name "*.spec.*" | head -10
 
 ## STEP 7: Update Config Specs
 
-Config specs follow the same principle as coding specs: verify against official docs, no placeholders.
+Config specs document **this project's actual setup** — its commit format, its test commands, its deploy target, its env vars. Not generic best-practice filler from official docs.
 
 ### Read existing templates
 
@@ -480,9 +466,9 @@ ls .claude/specs/config/
 Read each file: version-control.md, deployment.md, environment.md, testing.md
 
 ### For each config spec:
-1. Detect what's configured in the project
-2. If configured: fetch official docs (e.g., Vitest docs, Cloudflare docs), verify spec accuracy
-3. If not configured: prompt to set it up with recommendation based on stack
+1. Detect what's actually configured in the project (commit history, package scripts, deploy config, env files).
+2. **If configured:** document the project's real setup — the actual commands, paths, and conventions in use.
+3. **If not configured:** skip the spec. Do not emit a generic placeholder or a "recommended setup" — an empty deploy spec is worse than none; it reads as fact and goes stale. Note the gap in the summary instead.
 
 ### Update version-control.md
 
@@ -567,7 +553,7 @@ Update the template with:
 
 ## STEP 8: Generate All Specs
 
-**Use the research from Steps 5 and 5b to fill in actual content.** Don't create empty templates. Every spec should contain real patterns from official docs, including runtime behavior and interaction constraints.
+**Generate from Steps 5/5b and 9 — the non-obvious only.** Don't create empty templates, and don't restate the framework's API. A spec earns its place by carrying runtime behavior, interaction constraints, or this project's invariants — what the dev can't get from official docs or by reading the code.
 
 ### 8a: Ask which categories to generate
 
@@ -584,64 +570,39 @@ Based on your stack, these specs can be generated:
 Generate all? (yes / customize)
 ```
 
-### 8b: Generate coding specs
+### 8b: Generate coding specs (non-obvious behavior only)
 
-For each technology with code patterns, create `[technology]-specs.md` with **actual patterns from research**:
+A coding spec is worth generating **only** when a technology has non-obvious runtime behavior or cross-tech constraints (from STEP 5/5b). If a technology has none — the dev just uses its documented API — **skip it**. Do not generate a spec that restates the framework's API.
+
+When a spec is warranted, create `[technology]-specs.md` with the non-obvious only:
 
 ```markdown
-# React Specs
+# [Technology] Specs
 
-Source: https://react.dev/learn
-
-## Patterns
-
-### Component Declaration
-Use function components with TypeScript.
-
-```tsx
-interface ButtonProps {
-  label: string;
-  onClick: () => void;
-}
-
-export function Button({ label, onClick }: ButtonProps) {
-  return <button onClick={onClick}>{label}</button>;
-}
-```
-
-### Hooks
-- Call hooks at the top level, not inside conditions
-- Custom hooks must start with "use"
+Source: [official docs URL]
 
 ## Runtime Behavior
 
 ### Lifecycle
-[What happens from initialization to interactive — the execution sequence, not just the API]
+[Initialization to interactive — the execution sequence, not the API.]
 
 ### SSR Behavior (if applicable)
-[What does the server render? What HTML does the browser receive? What changes after JS executes?]
+[What the server renders; what HTML the browser receives before JS executes.]
 
 ### Side Effects
-[What does this technology do that isn't obvious from the API? Inline styles added during SSR, DOM mutations, global state changes, etc.]
+[What this technology does that the API doesn't reveal — inline styles during SSR, DOM mutations, global state.]
 
 ## Interaction Constraints
 
-[Constraints that emerge from combining this technology with others in the stack. From Step 5b research.]
+[Constraints from combining this technology with others in the stack. From STEP 5b.]
 
 ### [This Tech] + [Other Tech]: [Constraint Name]
 **What happens:** [Observable behavior]
 **Why:** [Mechanism]
 **Prevent by:** [What to do instead]
-
-## Anti-Patterns
-
-- Don't use `any` type - use proper TypeScript types
-- Don't mutate state directly - use setState
-
-## Project-Specific
-
-[Patterns found in existing code that differ from defaults]
 ```
+
+Generic API patterns — component declaration, hook rules, "use proper types" — are out. The dev knows them, and `engineering-principles` plus the project's invariants (STEP 9) govern how code is written here.
 
 ### 8c: Generate architecture specs
 
@@ -836,100 +797,35 @@ Generate component specs? (yes / customize / skip)
 
 **WAIT FOR USER RESPONSE**
 
-### 9b: Analyze each component
+### 9b: Capture each component's invariants (interview, do not scan)
 
-For each confirmed component, scan to understand its internals:
+For each component from 9a, invoke `capture-invariants` scoped to that component. It interviews for the load-bearing rules — the decisions a new dev breaks on day one — and emits a spec carrying each rule, its why, a revisit-if clause, and `conformance_rules` for the mechanizable subset.
 
-```bash
-# Entry points
-find {component}/ -maxdepth 2 -name "index.*" -o -name "main.*" -o -name "app.*" -o -name "server.*" | head -5
+**Do not scan-and-describe the component's current code.** The current code may already violate the invariant you are capturing; describing it codifies the transitional state, not the decision. That is why `capture-invariants` interviews instead of scanning (see `kit/engineering-principles.md`, "How a project applies these"). Generic framework patterns the dev already knows are out — capture what they cannot discover by reading the code.
 
-# Key patterns — what frameworks/libraries does this component use?
-grep -r "^import" {component}/ --include="*.ts" --include="*.tsx" | \
-  grep -oP 'from ["\x27]([^"\x27]+)' | sort | uniq -c | sort -rn | head -15
+Invoke per component:
 
-# Architecture patterns — how is it structured?
-find {component}/ -type d | head -15
-
-# Integration points — what does it import from other components?
-grep -r "from ['\"].*\.\./\.\." {component}/ --include="*.ts" | head -10
+```
+Skill: capture-invariants
+args: Capture the load-bearing invariants for the {name} component at {path}.
+      Emit a spec under $PROJECT_SPECS_ROOT/components/{name}.md with applies_to
+      covering {path}, each invariant's rule + why + revisit-if, and
+      conformance_rules for the mechanizable subset.
 ```
 
-Also check:
-- Does it have its own config files? (tsconfig, package.json, etc.)
-- Does it have its own test structure?
-- What ORM/DB patterns does it use?
-- What state management approach? (frontend)
-- What routing pattern? (API)
+If 9a found no distinct components (flat project), invoke `capture-invariants` once for the project as a whole.
 
-### 9c: Generate component specs
+### 9c: What capture-invariants emits
 
-For each component, create `$PROJECT_SPECS_ROOT/components/{name}.md`:
+One spec per component (or one project-wide), each invariant carrying two faces:
+- **the rule** (the what), plus a **`conformance_rule`** wherever a regex can decide a violation — a banned import, a module-level client, a hardcoded tenant literal;
+- **the why plus a revisit-if clause** — mandatory, so a future cleanup does not delete a load-bearing rule it does not understand.
 
-```markdown
----
-name: {component-name}
-description: >
-  Architecture and patterns for the {name} module.
-  Required reading before editing files in {path}.
-applies_to:
-  - "{path}/**/*.ts"
-  - "{path}/**/*.tsx"
-category: components
----
+Semantic invariants no regex can decide ("the LLM never computes a number") stay prose, enforced at `/review`. The skill caps to the load-bearing few (~3-5) — a wall of rules gets disabled wholesale the first time it blocks someone under deadline. It does not emit a "patterns" or "directory structure" dump; that is derivable by reading the code.
 
-# {Component Name}
+### 9d: Confirm registration
 
-## Purpose
-
-{What this component does in the system. One paragraph.}
-
-## Architecture
-
-### Directory Structure
-
-{scanned directory layout}
-
-### Key Entry Points
-- `{path}/index.ts` — {what it exports}
-- `{path}/server.ts` — {what it starts}
-
-### Core Patterns
-
-{Patterns discovered from scanning the code. Examples:}
-
-**Data Access:**
-- Uses repository pattern via `{path}/repositories/`
-- All DB queries go through repositories, never direct ORM calls in routes
-
-**Routing:**
-- Express router in `{path}/routes/`
-- Route handlers delegate to services in `{path}/services/`
-
-**State Management:** (frontend)
-- Zustand stores in `{path}/stores/`
-- Server state via React Query in `{path}/hooks/`
-
-### Integration Points
-
-- Imports from `shared/` for types and utilities
-- Exposes API consumed by `frontend/` via REST endpoints
-- Publishes events consumed by `workers/`
-
-## Anti-Patterns
-
-- Don't put business logic in route handlers — use services
-- Don't import directly from other components' internals — use their public API
-- Don't duplicate types that exist in `shared/`
-
-## Architecture Decisions
-
-{Any decisions discoverable from the code structure. If not obvious, leave this section for the user to fill in.}
-```
-
-### 9d: Add to stack-config.yaml
-
-For each generated component spec, add an entry:
+`capture-invariants` emits each spec with a frontmatter `applies_to`, and `enforce-specs` discovers specs by reading that frontmatter directly — enforcement needs no manual step. Add a `stack-config.yaml` entry only for the operational registry, the human/tooling view of which specs cover which files:
 
 ```yaml
 specs:
@@ -938,14 +834,7 @@ specs:
       file: components/backend.md
       applies_to:
         - "backend/**/*.ts"
-      description: "Backend API architecture and patterns"
-
-    - name: frontend
-      file: components/frontend.md
-      applies_to:
-        - "frontend/**/*.tsx"
-        - "frontend/**/*.ts"
-      description: "Frontend SPA architecture and patterns"
+      description: "Backend load-bearing invariants"
 ```
 
 ### 9e: Verify enforcement
@@ -973,55 +862,47 @@ The system map is a dependency graph and change impact guide. It tells Claude: "
 
 ### What to include
 
-Scan the project to identify:
-1. **Components** — key files/modules with their imports, reads, writes
-2. **Data flow** — how data moves through the system (routes, state, APIs)
-3. **Config connections** — what config files reference each other
-4. **Change impact rules** — "if you change X, also update Y"
+The map is the **non-derivable change intelligence** — the rules a dev cannot recover by grepping imports. Capture:
+1. **Load-bearing nodes** — the few files/modules where a change ripples non-obviously, each with its `if_changed` rule. Not every file.
+2. **Data flow** — how data moves through the system (routes, state, APIs).
+3. **Config connections** — what config files reference each other.
+4. **Change rules** — "if you change X, also update Y."
+
+Do **not** emit an exhaustive per-file `imports`/`used_by` graph. That is derivable — Claude greps imports at edit time — and it is the bulk of the bloat. The map's value is the `if_changed`/`change_rules` intelligence no grep produces.
 
 ### How to scan
 
+Scan to find the load-bearing nodes and cross-cutting flows, not to enumerate every import:
+
 ```bash
-# Detect project structure
-find src -type f -name "*.ts" -o -name "*.tsx" -o -name "*.js" -o -name "*.jsx" | head -30
+# Entry points and likely hubs (high fan-in/fan-out)
+find . -path ./node_modules -prune -o \( -name "index.*" -o -name "main.*" -o -name "app.*" \) -print | head -20
 
-# Find imports and dependencies
-grep -r "^import\|require(" src --include="*.ts" --include="*.tsx" | head -20
+# Config cross-references
+grep -rl "tsconfig\|tailwind\|postcss\|vite\|pyproject\|Cargo" *.config.* *.json *.toml 2>/dev/null
 
-# Find config cross-references
-grep -r "tsconfig\|tailwind\|postcss\|vite" *.config.* *.json 2>/dev/null
-
-# Find API routes / data sources
-find . -path "*/api/*" -name "*.ts" -o -path "*/routes/*" -name "*.ts" | head -10
+# Data sources / routes / API surfaces
+find . -path "*/api/*" -o -path "*/routes/*" 2>/dev/null | head -10
 ```
 
 ### Generate the YAML
 
 ```yaml
 # System Map — [project name]
-# Dependency graph and change impact guide.
+# Change-impact guide: the non-derivable rules — if you change X, what else.
 # Read this before editing project files.
 #
 # Generated by /sync-stack
 # Last verified: [date]
 
 components:
-  # For each key file/module:
-  src/components/Button.tsx:
-    purpose: Primary button component
-    imports: [src/lib/utils.ts, src/styles/tokens.ts]
-    used_by: [src/pages/Home.tsx, src/pages/Settings.tsx]
-    if_changed:
-      - Check all pages that import this component
-      - Update design system spec if API changes
-
+  # Only the load-bearing nodes — where a change ripples non-obviously.
+  # No imports/used_by: that is derivable by grepping at edit time.
   src/lib/api.ts:
-    purpose: API client
-    imports: [src/lib/config.ts]
-    used_by: [src/hooks/useData.ts, src/pages/Dashboard.tsx]
+    purpose: API client; the single boundary to the external API
     if_changed:
-      - Update API types if response shape changes
-      - Check all hooks that call these functions
+      - Update API types if the response shape changes
+      - Check every hook that calls these functions
 
 data_flow:
   # How data moves through the app
@@ -1333,18 +1214,11 @@ Wiring verification:
 - Build script ✓
 - All configs connected properly
 
-Specs generated:
-- config/version-control.md
-- config/testing.md
-- config/deployment.md
-- config/environment.md
-- coding/nextjs-specs.md
-- coding/typescript-specs.md
-- coding/tailwind-specs.md
-- coding/vitest-specs.md
-- architecture/project-structure.md
-- architecture/system-map.yaml (dependency graph + change impact)
-- design/tailwind-implementation.md
+Specs generated (project reality first):
+- components/app.md, components/api.md — load-bearing invariants per module (interview-captured)
+- config/version-control.md, config/testing.md — the project's actual setup (deployment/environment skipped: not configured)
+- coding/nextjs-specs.md — non-obvious runtime only (SSR/hydration); most technologies need no spec and are skipped
+- architecture/system-map.yaml — change-impact rules (if_changed / change_rules)
 
 CI/CD:
 - .github/workflows/ci.yml (build, lint, test)
@@ -1522,7 +1396,7 @@ Use this for internal project rules NOT covered by library documentation:
 - Business logic rules
 - Any project-specific patterns
 
-**Don't use for:** Library patterns (React, Prisma, Tailwind). Use regular `/sync-stack` for those.
+**Don't use for:** generic library patterns (React, Prisma, Tailwind) — the dev knows those, and the engineering principles govern code style. The main `/sync-stack` flow captures project reality via the invariant interview (STEP 9).
 
 ### Step 1: Spec Type
 

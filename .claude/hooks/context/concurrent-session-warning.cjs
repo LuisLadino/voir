@@ -7,8 +7,8 @@
  * Purpose: Warn when another Claude Code session is already alive in the
  *   same checkout. Two sessions sharing one working tree silently corrupt
  *   each other: branch switches, file races, dirty-tree deploys. The fix
- *   is to use .claude/scripts/worktree.cjs create. This warning makes the
- *   problem discoverable.
+ *   is to start each session in its own native worktree (claude -w). This
+ *   warning makes the problem discoverable.
  *
  * Reads from .claude/sessions/*.json markers, one per live session. Each
  * session writes its marker via session-init.cjs at SessionStart and
@@ -100,11 +100,9 @@ function warningText(others, projectRoot) {
   lines.push('RISK: shared working tree means branch switches, file races,');
   lines.push('and uncommitted-file deploys can hit silently.');
   lines.push('');
-  lines.push('FIX: run this session in an isolated worktree.');
+  lines.push('FIX: start this session in its own native worktree:');
   lines.push('');
-  lines.push('  node .claude/scripts/worktree.cjs create <branch>');
-  lines.push('  cd <printed-path>');
-  lines.push('  claude');
+  lines.push('  claude -w <branch>');
   lines.push('');
   lines.push('Override: set CLAUDE_KIT_NO_CONCURRENCY_WARN=1 to silence.');
   lines.push('========================================');

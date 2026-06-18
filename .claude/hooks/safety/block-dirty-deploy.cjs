@@ -129,7 +129,7 @@ function handleHook(data) {
   console.error('Fix options:');
   console.error('  1. Commit or stash the foreign files first.');
   console.error('  2. Run the deploy from an isolated worktree:');
-  console.error('     node .claude/scripts/worktree.cjs create deploy --no-install');
+  console.error('     claude -w deploy');
   console.error('  3. Override after confirming the risk: ALLOW_DIRTY_DEPLOY=1 ' + command.slice(0, 60));
   process.exit(2);
 }

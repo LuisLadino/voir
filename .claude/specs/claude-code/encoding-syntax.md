@@ -4,9 +4,7 @@ description: >
   How to encode XML angle brackets when writing about your own tool calls
   or system tags. Required when documenting system internals.
 applies_to:
-  - ".claude/docs/**/*.md"
-  - ".claude/specs/**/*.md"
-  - ".claude/agents/**/*.md"
+  - ".claude/specs/claude-code/**/*.md"
 category: claude-code
 ---
 

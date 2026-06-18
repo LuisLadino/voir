@@ -1,7 +1,7 @@
 ---
 name: verify
 description: >
-  Drain the verification queue. Triggers: "verify the queue", "drain the queue", "verify these issues", "close verified issues". Claude analyzes, Luis approves before closing.
+  Drain the verification queue. Triggers: "verify the queue", "drain the queue", "verify these issues", "close verified issues". Claude closes what it can verify; only items needing a human stay open.
 argument-hint: [issue-numbers...]
 allowed-tools: Bash, Read
 ---
@@ -10,20 +10,28 @@ allowed-tools: Bash, Read
 
 You are draining the verification queue. The queue lives in GitHub: any issue whose merged PR used `Addresses #X` and is still open is awaiting a verification call.
 
-The shape is analysis-first, batched approval. You read every issue's DoD, every merged PR's diff and CI status, and produce a single recommendation table. Luis scans the table and approves in one shot. The action layer (close, follow-up filing) only fires after his approval.
+The default is **verify and close**. For every issue you can actually check, you read its Definition of Done, compare it against the merged diff and CI, and if it holds you write the evidence to the issue and close it. You do this yourself, in the same pass, without waiting for Luis.
 
-This inverts the QA-contact role from Bugzilla. Luis is still the deciding authority. You do the legwork so the deciding authority's attention budget goes to the cases that actually need a human.
+An issue stays open for exactly two reasons, and both get a written comment so nothing ever lingers without context:
 
-=== CRITICAL: NEVER ACT WITHOUT EXPLICIT APPROVAL ===
+1. **Verification gap** — a DoD item is not met, the diff introduces a regression, or CI is red. You document the specific gap and file a follow-up if it is separable scope.
+2. **Human-only verification** — confirming the fix needs something only a human can do. You document exactly what is needed and surface it to Luis.
 
-You are STRICTLY PROHIBITED from:
-- Closing an issue before Luis has approved that specific issue (by `yes`, by listing its number, or by saying `y` during the per-issue walk)
-- Filing a follow-up issue without Luis's one-sentence gap description
-- Treating a `close` recommendation as authorization to close — recommendation is analysis, action requires approval
-- Skipping the recommendation table to act directly
-- Categorizing an issue as `close` when the diff doesn't actually verify the DoD (e.g., "the PR title looks fine") — when in doubt, recommend `flag`
+The second bucket is narrow on purpose. It is the only thing that routes to Luis, and it exists for fixes a human genuinely must close, not as a default holding pen.
 
-Recommendation is automatic. Action is human-approved. This boundary is non-negotiable.
+=== CRITICAL: THE RULE THIS SKILL ENFORCES ===
+
+If you can verify it, you close it. "Can verify" means you can confirm the DoD by reading the diff, running a test, executing a script, or inspecting state you have access to. When that is true, closing is your job, not Luis's.
+
+You route an issue to Luis ONLY when verification is outside your reach:
+
+- It needs access, credentials, or a permission grant you do not have.
+- It needs a subjective human judgment: a design sign-off, an aesthetic call, a product or positioning decision.
+- It needs observing real-world or external behavior you cannot execute or inspect: a live phone line, a deployed UI a person must use, state in another repo or system you cannot read from here.
+
+Telling Luis to "sign off" on something he cannot verify any better than you can is the exact failure this skill exists to prevent. If you are about to ask for approval on a fix you already confirmed works, stop and close it.
+
+Every issue you touch gets a comment: closed with evidence, or open with the gap or the human action needed. An issue must NEVER sit in the queue silent.
 
 ## Step 1: Build the Queue
 
@@ -36,17 +44,17 @@ node .claude/skills/verify/find-stale-addresses.cjs --all-ages --json
 The output is an array of `{pr: {number, title, url, mergedAt, ageDays}, issue: {number, title, url}}`. An issue can appear multiple times if multiple PRs reference it.
 
 Build the analysis set:
-- Group rows by `issue.number`. Each unique issue becomes one row in the recommendation table.
-- For each issue, collect every PR that referenced it (preserve all PR numbers, mergedAt timestamps, and titles).
+- Group rows by `issue.number`. Each unique issue becomes one row.
+- For each issue, collect every PR that referenced it. Preserve all PR numbers, mergedAt timestamps, and titles.
 - If `$ARGUMENTS` was provided, filter to those issue numbers. Warn on any that aren't in the queue: "#N not in verify queue (already closed, or no merged Addresses PR)."
 
 If the queue is empty, say "Verification queue is empty. Nothing to drain." and stop.
 
 If the queue exceeds 25 issues, say "Queue has N issues. Slice with /verify <numbers> or run in passes — analyzing all in one shot will be slow." and stop. Luis can re-invoke with a slice.
 
-## Step 2: Analyze Each Issue
+## Step 2: Verify Each Issue
 
-For each unique issue in the analysis set, gather evidence:
+For each unique issue, gather evidence:
 
 ```bash
 gh issue view <issue_number> --json title,body,labels,createdAt
@@ -58,148 +66,53 @@ gh pr diff <pr_number>
 
 Optionally check `.claude/dispatch/<session-id>.result.json` for a worker summary if the PR was dispatched. Absence is fine.
 
-For each issue, derive a recommendation. The decision tree:
+Derive the disposition. The decision tree:
 
-1. **Read the issue's Definition of Done.** If the body has a `## Definition of Done` section, use that verbatim. Otherwise extract the implicit DoD from `## Problem` / `## Why It Matters` / `## Proposed Solution`.
+1. **Read the Definition of Done.** If the body has a `## Definition of Done` section, use it verbatim. Otherwise extract the implicit DoD from `## Problem` / `## Why It Matters` / `## Proposed Solution`.
 
-2. **Compare the shipped diff against the DoD.** For each DoD item, ask: does the diff contain code, doc, or config that demonstrably addresses this item? Cite file paths.
+2. **Compare the shipped diff against every DoD item.** For each item, ask: does the diff contain code, doc, or config that demonstrably satisfies it? Cite file paths. "The PR title looks fine" is not verification. Read the diff. Where a test or script proves the behavior, run it.
 
-3. **Check CI status.** If `statusCheckRollup` shows any failed required check, that's a `flag` regardless of diff content. If checks are still in progress, that's also `flag`.
+3. **Check CI.** A failed required check is a gap regardless of diff content. CI still in progress means verification is not done. Re-check before disposing; do not close on a pending run.
 
-4. **Pick a bucket:**
-   - `close` — every DoD item is verifiably addressed in the diff, CI is green, no obvious gap
-   - `do-not-close` — at least one DoD item is not addressed in the diff, OR the diff introduces a regression visible to a careful reader, OR CI failed
-   - `flag` — DoD is ambiguous, evidence is mixed, you can't tell either way, or CI is in progress
+4. **Assign a disposition:**
+   - `close` — every DoD item is verifiably satisfied in the diff, CI is green, no regression you can spot. You can confirm this yourself.
+   - `gap` — at least one DoD item is unmet, the diff regresses something a careful reader would catch, or CI failed. The work is not done.
+   - `needs-human` — verifying the DoD requires access, subjective judgment, or external observation you cannot perform, per THE RULE above. This is not "I'm unsure." An ambiguity you can resolve by reading more is yours to resolve.
 
-5. **Write a one-sentence rationale.** It must reference either the DoD item satisfied (for `close`), the gap identified (for `do-not-close`), or the ambiguity (for `flag`). No vague "looks good" — name what was checked.
+5. **Write a one-sentence rationale.** Cite the DoD item satisfied for `close`, the specific gap for `gap`, or the exact human action required for `needs-human`. No vague "looks good."
 
-When in doubt between `close` and `flag`, pick `flag`. Recommendation is cheap; mistaken close is expensive.
+When you are unsure between `close` and `gap`, investigate further. Read more of the diff, run the test, check the linked code. Resolve the ambiguity yourself. Escalate to `needs-human` only when the ambiguity is genuinely one a human must settle.
 
-## Step 3: Present the Recommendation Table
+## Step 3: Act
 
-Output a single markdown table. One row per unique issue, sorted with `flag` and `do-not-close` first, then `close` last:
+Work the dispositions in this pass. You do not stop to ask permission before acting. Verification is the authorization.
 
-```markdown
-## Verify queue: N issues
-
-| #  | Issue | PR(s) | CI | Reco | Why |
-|----|-------|-------|----|----|-----|
-| 1  | #224 _Design Polish missing "use client"_ | #282 | pass | close | Hook adds Next.js .tsx detection at agent.cjs:142, test added at agent.test.cjs:88 |
-| 2  | #252 _mem0+Letta substrate setup_ | #258 #259 #264 | pass | flag | Substrate shipped, but DoD also requires "migrate OMEGA memories" — no migration evidence in any diff |
-| 3  | #297 _invented constraints_ | #312 | pass | close | CLAUDE.md gains explicit anti-constraint-invention block; banned-phrases list matches DoD |
-```
-
-Truncate issue titles to ~50 chars. Use issue and PR numbers as plain `#N` (the GitHub renderer auto-links them in comments; in chat output the number is enough).
-
-After the table, expand any `flag` or `do-not-close` items with a fuller block:
-
-```markdown
-### #252 — flag
-
-**DoD:** install mem0 + Letta + migrate OMEGA memories + wire MCP for role-agent substrate
-
-**What shipped (PRs #258, #259, #264):**
-- mem0 wrapper at .claude/hooks/lib/mem0.cjs (2 LOC user_id casing fix)
-- Letta Docker image pin in install runbook
-- Substrate infrastructure scaffolding
-
-**Gap:** "migrate OMEGA memories" is in the DoD. No diff touches OMEGA-export or mem0-import code paths. Either the migration shipped in another PR, was deferred, or is incomplete. Luis: which is it?
-```
-
-End with the approval prompt:
-
-```
-Approve all `close` recommendations? [yes / list / individual / no]
-- yes      — close every `close` row in one batch
-- list     — type the issue numbers to close (e.g., #224 #297)
-- individual — walk each `close` row one at a time (current /verify behavior)
-- no       — skip the close batch; only walk `flag` and `do-not-close` items
-```
-
-Then stop. Wait for Luis's response.
-
-## Step 4: Take Action on the Close Batch
-
-### On `yes`
-
-For each issue in the `close` bucket, in order, execute:
+### close
 
 ```bash
 gh api repos/{owner}/{repo}/issues/<issue_number>/comments -f body="## Verified
 
 Fix shipped in #<pr_numbers>, merged <merged_dates>. Verified during /verify pass on $(date -u +%Y-%m-%d).
 
-Closing per CLAUDE.md verify-before-close rule (was awaiting verification, not awaiting work)."
+<one line naming the DoD item(s) confirmed and where in the diff>
+
+Closing per CLAUDE.md verify-before-close rule. Was awaiting verification, not awaiting work."
 
 gh issue close <issue_number> --reason completed
 ```
 
-Use `gh api` for the comment to bypass enforce-plan. When an issue has multiple PRs, list all PR numbers and merged dates in the comment.
+Use `gh api` for the comment to bypass enforce-plan. When an issue has multiple PRs, list all PR numbers and merged dates. Print `✓ Closed #N`.
 
-After each close, print `✓ Closed #N`. After the batch, print `Closed N issues.`.
+### gap
 
-### On `list <numbers>`
-
-Parse the numbers. For any number not in the `close` bucket, warn: "#N is in `flag`/`do-not-close` bucket; closing anyway requires walking it individually." Do NOT close those.
-
-Close each approved-and-in-bucket issue using the same `gh api` + `gh issue close` flow above.
-
-### On `individual`
-
-Walk each `close` row one at a time. For each row, present:
-
-```
-#N: <title>
-PR(s): #M
-CI: <status>
-Recommendation: close
-Rationale: <one-sentence why>
-
-Diff: <truncated diff, top 3 files, max 50 lines per file>
-
-Verify and close #N? [y / n / skip]
-```
-
-On `y`: execute the close flow above.
-On `n`: jump to Step 5's do-not-close branch for this issue.
-On `skip`: print `→ Skipped #N` and move on.
-
-### On `no`
-
-Print `Close batch skipped. Walking flagged items only.` and proceed to Step 5.
-
-## Step 5: Walk Flagged and Do-Not-Close Items
-
-For each `flag` or `do-not-close` row, present:
-
-```
-#N: <title>
-PR(s): #M
-CI: <status>
-Recommendation: <flag|do-not-close>
-Rationale: <one-sentence why>
-
-<expanded block from Step 3>
-
-Verify and close #N? [y / n / skip]
-```
-
-### On `y`
-
-Same close flow as Step 4. Print `✓ Closed #N (overrode <reco>)`.
-
-### On `n`
-
-Do NOT close. Ask: "What's still broken? One sentence — I'll capture it as a follow-up."
-
-Wait for response. Then file a follow-up via `gh api`:
+Document the gap on the issue. If the gap is separable scope, file a follow-up first and reference it.
 
 ```bash
 gh api repos/{owner}/{repo}/issues \
-  -f title="follow-up: <short description from Luis>" \
+  -f title="follow-up: <short gap description>" \
   -f body="## Problem
 
-<Luis's one-sentence description>
+<the specific gap>
 
 ## Context
 
@@ -210,56 +123,73 @@ Shipping PR: #<pr_number>" \
   -F "labels[]=type/bug" \
   -F "labels[]=priority/medium" \
   -F "labels[]=status/backlog"
+
+gh api repos/{owner}/{repo}/issues/<issue_number>/comments -f body="## Verification: gap
+
+PR #<pr_number> shipped but did not fully resolve this: <the gap>. Captured the remaining gap as #<new_issue_number>, or noted it belongs to this issue. Leaving open until it closes."
 ```
 
-Then comment on the original issue:
+Print `✗ #N stays open — gap documented`, appending `→ #M` if a follow-up was filed.
+
+### needs-human
+
+Document exactly what human verification is needed and why you cannot do it.
 
 ```bash
-gh api repos/{owner}/{repo}/issues/<issue_number>/comments -f body="## Verification: rejected
+gh api repos/{owner}/{repo}/issues/<issue_number>/comments -f body="## Verification: needs you
 
-PR #<pr_number> shipped but did not fully resolve this. Captured the remaining gap as #<new_issue_number>. Leaving this issue open until the gap is closed."
+The fix in #<pr_number> looks shipped, but confirming the DoD needs something I cannot do from here: <the specific access, judgment, or external observation required, and why it is human-only>.
+
+What I checked: <what you could verify of the diff and CI>.
+What you need to confirm: <the one concrete thing>.
+
+Leaving open until you verify."
 ```
 
-Print `✗ #N stays open. Follow-up filed: #M`.
+Print `⏸ #N needs you — <one line on what is required>`.
 
-### On `skip`
+## Step 4: Report
 
-Print `→ Skipped #N`. Move on.
+After every issue is handled, print a summary table, one row per issue:
 
-### On anything else
+```markdown
+## Verify pass: N issues
 
-Treat as a question or correction. Answer or clarify, then re-ask `Verify and close #N? [y / n / skip]`. Don't guess intent.
+| #  | Issue | PR(s) | Disposition | What happened |
+|----|-------|-------|-------------|---------------|
+| #224 | _Design Polish missing "use client"_ | #282 | closed | DoD met: hook adds .tsx detection at agent.cjs:142, test at agent.test.cjs:88, CI green |
+| #252 | _mem0+Letta substrate_ | #258 #264 | gap → #266 | DoD "migrate OMEGA memories" unmet; no diff touches the migration path |
+| #381 | _telephony setup_ | #390 | needs you | Confirming the live phone line connects needs a human call I cannot place |
+```
 
-## Step 6: Final Summary
-
-After every row in the analysis set has been handled, print:
+Then:
 
 ```
 Verify pass complete.
-- Closed: <count> — #A #B #C
-- Stayed open with follow-up: <count> — #D (→ #E), #F (→ #G)
-- Skipped: <count> — #H #I
+- Closed: <count> — #A #B (evidence on each issue)
+- Gap, stays open: <count> — #C (→ #D)
+- Needs you: <count> — #E: <what you must verify>
 
-Skipped items will surface again next session via [VERIFY].
+Reopen any close you disagree with; the evidence comment is on the issue.
 ```
 
-## When Luis Stops Mid-Pass
-
-Luis can stop at any point. Don't push back. Print what's been handled and what remains. The queue persists in GitHub state — picking up next session is automatic.
+If there were zero needs-you items, say so plainly. That is the healthy default, not something to apologize for.
 
 ## Cross-Repo Verification
 
-This skill operates on the current repo only. To verify another repo's queue, `cd` to that repo first and run `/verify` there. Cross-repo flag is intentionally not supported.
+This skill operates on the current repo only. To verify another repo's queue, `cd` to that repo first and run `/verify` there. Cross-repo flag is intentionally not supported. An issue whose remaining work lives in another repo is a `gap` here: document the cross-repo dependency and leave it open.
+
+## When Luis Stops Mid-Pass
+
+Luis can stop at any point. Don't push back. Print what's been handled and what remains. The queue persists in GitHub state, so picking up next session is automatic.
 
 ## Critical Rules Recap
 
-- ALWAYS produce the recommendation table before any action
-- ALWAYS require explicit approval (`yes` / `list` / per-issue `y`) before closing
-- ALWAYS include a one-sentence rationale on every recommendation, citing DoD or diff
-- NEVER close on a `close` recommendation alone — recommendation is analysis, not authorization
-- NEVER skip the diff in your analysis — "PR title looks fine" is not verification
-- NEVER classify as `close` when in doubt — `flag` is the safe default
-- NEVER auto-stale-close issues that linger in the queue
-- ON ambiguous response, re-ask. Don't guess.
+- DEFAULT to verify-and-close. If you can confirm the DoD, close it. Don't wait for approval. Verification is the authorization.
+- ALWAYS write a comment on every issue you touch: evidence on `close`, the gap on `gap`, the human action on `needs-human`. NEVER leave an issue silent.
+- ROUTE to Luis ONLY for access, subjective judgment, or external observation you cannot perform. An "I'm unsure" you can resolve by reading more is not a route. Resolve it.
+- NEVER close when a DoD item is unmet, a regression is visible, or CI is red. That is a `gap`. Document it.
+- NEVER classify "PR title looks fine" as verification. Read the diff.
+- Luis can reopen any close. The evidence comment makes every close auditable.
 
-Complete the user's request by analyzing the queue, presenting one recommendation table, accepting Luis's batched approval, and executing approved actions.
+Complete the user's request by building the queue, verifying each issue against its DoD, closing what you can confirm with evidence, documenting every gap and human-only item on its issue, and reporting what you did.

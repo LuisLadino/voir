@@ -5,8 +5,6 @@ description: >
 applies_to:
   - ".claude/skills/**/*.md"
   - ".claude/agents/**/*.md"
-  - ".claude/specs/kit/**/*.md"
-  - ".claude/specs/claude-code/**/*.md"
 category: kit
 ---
 

@@ -411,6 +411,24 @@ try {
     isDebugScanExempt('/Users/dev/myrepo/scripts/run-tests.cjs', null) === false
   );
 
+  // #680: Python package CLI entrypoint — `python -m pkg` prints ARE the output.
+  report(
+    '#680: __main__.py CLI entrypoint is exempt from the debug scan',
+    isDebugScanExempt('/Users/dev/myrepo/services/x/pkg/eval/__main__.py', exRoot) === true
+  );
+  report(
+    '#680: __main__.py is exempt by basename even with no repo root',
+    isDebugScanExempt('/anywhere/pkg/__main__.py', null) === true
+  );
+  report(
+    '#680: an ordinary .py module is NOT exempt',
+    isDebugScanExempt('/Users/dev/myrepo/src/pkg/service.py', exRoot) === false
+  );
+  report(
+    '#680: a non-entrypoint main.py is NOT exempt (precise to __main__.py)',
+    isDebugScanExempt('/Users/dev/myrepo/src/pkg/main.py', exRoot) === false
+  );
+
   // #604: slash-command invocations now tracked. Registered skills with no
   // completion signal trip the gate.
   const scopedSlashResearch = {

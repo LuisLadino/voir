@@ -89,7 +89,7 @@ If #300 V3 CMA reverses per #335 Layer 1, the Identity / Authorization Gaps and 
 
 ## Related
 
-- `.claude/research/product/product-sdk/agent-governance-runtime-security-2026-04.md` — verdict V3 source
+- `cosmo:docs/research/product-sdk/agent-governance-runtime-security-2026-04.md` — verdict V3 source (relocated to the cosmo repo 2026-06-06)
 - `.claude/specs/kit/block-dangerous.md` — first per-hook mapping, this issue
 - `.claude/specs/kit/sensitive-file-protection.md` — block-sensitive-bash-writes spec, OWASP Coverage section to follow
 - `.claude/specs/kit/voice-context.md` — enforce-voice spec, OWASP Coverage section to follow

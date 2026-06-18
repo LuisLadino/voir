@@ -29,12 +29,14 @@ Three voice categories:
 
 Voice enforcement splits by channel, with opposite defaults that match each channel's dominant use.
 
-**Plane 1.** File content on disk via Write or Edit, plus clipboard content via Bash pbcopy or content-file redirect. Implemented in `enforce-voice.cjs`.
+**Plane 1.** File content on disk via Write or Edit, plus clipboard content via Bash pbcopy. Implemented in `enforce-voice.cjs`.
 
 - Write and Edit default to SKIP. Enforcement fires only when the target path matches a `paths:` entry in `voice.yaml`. Unmatched writes pass silently regardless of extension or project tree. Rationale: file writes are overwhelmingly internal state such as specs, memory, research notes, logs. External drafts that need voice-checking are opt-in via path declaration.
-- Bash pbcopy and content-file redirects default to ENFORCE. The channel is inherently external: content destined for the clipboard or a content file is assumed for an external reader unless routed to `none` or overridden with `VOICE=none`. Rationale: pbcopy is the dominant external channel for drafts that leave the session.
+- Bash pbcopy defaults to ENFORCE. The channel is inherently external: content piped to the clipboard is assumed for an external reader unless routed to `none` or overridden with `VOICE=none`. Rationale: pbcopy is the dominant external channel for drafts that leave the session.
 
-**Plane 2.** Outbound tool calls with inline content arguments such as send_email, post_to_instagram, send_sms. Not yet shipped in the kit because the kit has no external-send tools wired today. Architectural shape decided per #305 V1 (Hybrid Option C: SDK PreToolUse hook primary (kit registers its own; product registers its own) plus minimal Python-decorator helper for non-MCP boundary cases — see `.claude/research/product/product-sdk/voice-plane-2-landscape-2026-04.md`). Implementation extends `enforce-voice.cjs` with an `external_tools:` registry — PreToolUse matchers on declared MCP tool patterns, inspecting `tool_input` content fields with the same hash-verified retry model as pbcopy. First retrofit target is Gmail MCP send (`mcp__gmail__send`) per #305 V1 first-validation use case, filed independently of Sam's pilot timeline. Reversal: switches to Approach E (gateway pattern via Cloudflare Enterprise MCP / Strata / Gravitee) at LLC multi-venue scale (5+ venues per #300 V2 ops crossover) AND when the hook plus helper proves insufficient at scale. Issue origin: #240 folded into #268 during 2026-04-24 cleanup, then promoted to per-dimension under #305 per #296 restructure.
+The Bash content-file redirect channel was removed in #743. Redirects to `.md`/`.mdx`/`.txt` are overwhelmingly internal (notes, logs, generated docs), the default-enforce taxed routine authoring, and the regex was quote-naive. File content that needs voice-checking is opt-in via Write/Edit `paths:`; pbcopy stays the external edge.
+
+**Plane 2.** Outbound tool calls with inline content arguments such as send_email, post_to_instagram, send_sms. Not yet shipped in the kit because the kit has no external-send tools wired today. Architectural shape decided per #305 V1 (Hybrid Option C: SDK PreToolUse hook primary (kit registers its own; product registers its own) plus minimal Python-decorator helper for non-MCP boundary cases — see `cosmo:docs/research/product-sdk/voice-plane-2-landscape-2026-04.md`). Implementation extends `enforce-voice.cjs` with an `external_tools:` registry — PreToolUse matchers on declared MCP tool patterns, inspecting `tool_input` content fields with the same hash-verified retry model as pbcopy. First retrofit target is Gmail MCP send (`mcp__gmail__send`) per #305 V1 first-validation use case, filed independently of Sam's pilot timeline. Reversal: switches to Approach E (gateway pattern via Cloudflare Enterprise MCP / Strata / Gravitee) at LLC multi-venue scale (5+ venues per #300 V2 ops crossover) AND when the hook plus helper proves insufficient at scale. Issue origin: #240 folded into #268 during 2026-04-24 cleanup, then promoted to per-dimension under #305 per #296 restructure.
 
 ## Registry Schema
 
@@ -70,7 +72,7 @@ Fields:
 
 Three sources, highest to lowest:
 1. `VOICE=NAME` env-var prefix in the Bash command. Example: `VOICE="client:ignite" echo ... | pbcopy`. Bash channel only.
-2. Path-pattern match from `paths[]`. Applies to Write, Edit, and Bash redirects to content files.
+2. Path-pattern match from `paths[]`. Applies to Write and Edit.
 3. Registry `default`. Bash channel only. Write and Edit do not fall through to `default` under the Plane 1 scope inversion.
 
 If no signal matches and the registry is missing or invalid, the Bash channel falls back to a hardcoded Luis voice. Fresh projects stay safe on pbcopy. Write and Edit in a fresh project with no path rules pass silently.
@@ -79,7 +81,7 @@ If no signal matches and the registry is missing or invalid, the Bash channel fa
 
 The `enforce-voice` hook fires on `PreToolUse` with matchers `Bash`, `Write`, and `Edit`.
 
-- `Bash` fires when the command contains `| pbcopy` or a redirect to `.md`, `.mdx`, or `.txt`. Default-enforce with Luis fallback.
+- `Bash` fires when the command pipes to `pbcopy`, or runs `pbcopy` as a leading command reading a file. Default-enforce with Luis fallback. No other Bash command is gated.
 - `Write` and `Edit` fire only when the target path matches a `paths[]` entry in `voice.yaml`. Default-skip. Rule patterns work on any extension: a `brand/**/*.tsx` rule blocks Write to tsx files that match.
 
 The `voice-identity.cjs` module fires on `UserPromptSubmit` and injects the active voice's rules as a reminder when the prompt matches content-writing patterns. Both hooks read the same registry, so rule text lives in one place.
@@ -109,7 +111,7 @@ The hook is registered at **user scope** in `~/.claude/settings.json`, not per-p
 }
 ```
 
-**Do not add an `if: "Bash(*pbcopy*)"` filter.** The hook's internal regex handles both `pbcopy` and `.md`/`.mdx`/`.txt` redirects. A matcher-level filter on `pbcopy` would hide the redirect channel from the hook.
+**The Bash matcher is currently `Bash` (all Bash calls).** The hook fast-exits via `detectsPbcopySink` on any command that is not a real pbcopy sink. Before #743 a matcher-level `pbcopy` filter would have hidden the redirect channel; with that channel gone, narrowing the matcher to `Bash(*pbcopy*)` is now safe and a reasonable optimization. The glob is a coarse pre-filter and `detectsPbcopySink` still does the precise re-check, per `injection-precision.md`. Tracked in #751.
 
 **The guard checks the hook file, not the hooks directory.** Projects that synced the kit pre-voice-registry have the directory but not this hook. File-level existence check avoids crashing on partial sync.
 
@@ -121,11 +123,7 @@ When a project picks up the kit via `git pull` rather than `sync-kit.sh`, the re
 2. Copy the template above.
 3. Adjust `default`, `voices`, and `paths` as needed.
 
-Until the file exists, Write and Edit pass silently under default-skip. The Bash channel falls back to a hardcoded Luis voice for pbcopy and content-file redirects. Safe default.
-
-## Claude-Consumed Paths in Bash Redirects
-
-Under Plane 1, Write and Edit already default to skip, so no path is "enforced by default." The Bash channel is different: pbcopy and content-file redirects default-enforce. For Bash redirects, writes under `.claude/` and `.github/` skip voice enforcement, along with the root `CLAUDE.md`. These are instructions and templates Claude reads for itself, not external content. An explicit `paths[]` rule wins over this skip.
+Until the file exists, Write and Edit pass silently under default-skip. The Bash channel falls back to a hardcoded Luis voice for pbcopy. Safe default.
 
 ## Hash-Verified Retry
 
@@ -135,7 +133,7 @@ For `Write` and `Edit`, the retry signal is a different content hash. No explici
 
 ### State scoping
 
-The `lastVoiceBlockedHash` is a single value per prompt or session scope. It is not keyed per voice. Switching voices between attempts, via `VOICE=NAME` or a path rule change, produces a different command hash in `Bash` because the full command changes. In `Write`/`Edit`, switching voices without revising content keeps the hash the same and blocks again under the new voice rules. Use revision OR an explicit `none` routing to pass.
+The `lastVoiceBlockedHash` is a single value per prompt or session scope. It is not keyed per voice. In `Bash`, switching voices via `VOICE=NAME` produces a different command hash because the full command changes. In `Write`/`Edit`, switching voices without revising content keeps the hash the same and blocks again under the new voice rules. Use revision OR an explicit `none` routing to pass.
 
 ## Adding a New Voice
 
@@ -183,10 +181,6 @@ The parser is intentionally small. Every feature outside this list requires a de
 
 **Voice name contains `:` but is unquoted in YAML.** YAML parses the mapping incorrectly. Always quote client-voice names with double quotes.
 
-**False-positive block on self-consumed file.** The hook skips `.claude/**` and `.github/**` by default. When a new self-consumed prefix gets added, update `VOICE_SKIP_PATH_PREFIXES` in `enforce-voice.cjs`.
-
-**Bash redirect regex matches inside quotes.** A command like `echo "rm > file.md"` triggers the hook on the redirect path. That regex is single-pass, not shell-parse aware. Use `VOICE=none` to override when needed. The pbcopy matcher is quote-aware as of #640 and does not share this limitation; see the Invariants section.
-
 **Content unchanged between block and retry.** Intended behavior. Revise the content or switch voices explicitly with a path rule or `VOICE=NAME` prefix.
 
 **Partial sync: hook present, registry module absent.** The hook fails open via a defensive `require`. The tool call proceeds without voice enforcement until the next sync completes.
@@ -196,7 +190,6 @@ The parser is intentionally small. Every feature outside this list requires a de
 - Hash-retry verification from #67 stays intact. `enforce-voice.cjs` hashes the command or content and compares against the last `voice_blocked` event.
 - Injection modules under `.claude/hooks/context/**/*.cjs` use hand-written anchored regex or `escapeRegex`. See `injection-precision.md`.
 - Registry reader resolution order: `CLAUDE_PROJECT_DIR` env var, then walk up from the TARGET file path when provided, then walk up from `cwd`, then fall back. The target-path walk is what makes cross-repo writes load the target repo's `voice.yaml` instead of the orchestrator repo's. See `resolveProjectRoot(hintPath)` in `project-root.cjs` (voice-registry re-exports a `symlinkGuard: false` binding). Subagents reach the registry through this file walk, not session state.
-- Hot path short-circuits: on Write and Edit, if no `paths:` rules exist, the hook exits without parsing YAML. The cheap `registryHasPathRules` check runs before `loadRegistry`. The Bash channel uses the same check when redirecting into `.claude/` or `.github/` without an explicit env override.
-- Auto-memory tree skip: paths under `~/.claude/projects/**/memory/**` (Claude's own internal state, resolved from `PROJECTS_DIR` in `session-utils.cjs`) are skipped unconditionally before any voice resolution runs. These are structurally out-of-tree relative to any project root and cannot be matched by any `voice.yaml` `paths:` rule. Skip is prefix-guarded with `path.resolve` to prevent traversal tricks. Implemented at the top of both `handleFileWrite` and `handleBash` in `enforce-voice.cjs`.
-- Out-of-tree redirect skip (#631): a Bash redirect whose target has no `.claude` ancestor (e.g. `npm run knip > /tmp/k.txt`, `> $TMPDIR/out.txt`) is scratch outside any project and skips voice enforcement. `handleBash` walks the real filesystem from the resolved target via `hasProjectAncestor`, not `resolveProjectRoot`. The latter short-circuits to `CLAUDE_PROJECT_DIR` and otherwise falls back to the target's own dir, never returning null, so it cannot distinguish a scratch target from project content. In-tree and cross-repo content redirects keep a `.claude` ancestor and still enforce; pbcopy has no redirect target and is unaffected.
-- Pbcopy sink detection strips quotes (#640): the clipboard channel fires only when `pbcopy` is a real command sink, not when the literal token appears inside an argument. `detectsPbcopySink` removes single- and double-quoted regions before testing, so a grep alternation (`grep 'a\|pbcopy'`), an `echo`/`sed` body, or a `gh issue create --body` that merely shows `| pbcopy` as an example no longer blocks. A shell pipe cannot live inside quotes, so stripping never drops a real sink. Backslash-escaped pipes (`grep a\|pbcopy`, unquoted BRE alternation) are excluded by requiring the pipe's preceding character to be neither `|` nor `\`. The redirect regex stays quote-naive (see Known limitations); only the pbcopy path was in scope for #640.
+- Hot path short-circuits: on Write and Edit, if no `paths:` rules exist, the hook exits without parsing YAML. The cheap `registryHasPathRules` check runs before `loadRegistry`.
+- Auto-memory tree skip: paths under `~/.claude/projects/**/memory/**`, Claude's own internal state resolved from `PROJECTS_DIR` in `session-utils.cjs`, are skipped unconditionally before any voice resolution runs. These are structurally out-of-tree relative to any project root and cannot be matched by any `voice.yaml` `paths:` rule. Skip is prefix-guarded with `path.resolve` to prevent traversal tricks. Implemented at the top of `handleFileWrite` in `enforce-voice.cjs`. The pbcopy channel has no file target, so it does not need the skip.
+- Pbcopy sink detection strips quotes (#640): the clipboard channel fires only when `pbcopy` is a real command sink, not when the literal token appears inside an argument. `detectsPbcopySink` removes single- and double-quoted regions before testing, so a grep alternation (`grep 'a\|pbcopy'`), an `echo`/`sed` body, or a `gh issue create --body` that merely shows `| pbcopy` as an example no longer blocks. A shell pipe cannot live inside quotes, so stripping never drops a real sink. Backslash-escaped pipes (`grep a\|pbcopy`, unquoted BRE alternation) are excluded by requiring the pipe's preceding character to be neither `|` nor `\`.

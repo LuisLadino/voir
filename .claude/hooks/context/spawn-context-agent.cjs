@@ -17,6 +17,13 @@
 //   best to use it without the user having to ask for it first."
 // - IMPORTANT: and Do NOT match emphasis patterns Claude responds to
 function handleHook() {
+  // A skill-gate trigger walk (skill-trigger-walk.cjs) drives `claude -p` to
+  // measure whether a phrase routes to a skill. This dominant "spawn the agent"
+  // instruction hijacks that one-shot turn into a context-evaluation, so the
+  // phrase never gets routed and the walk records a false not-fired. Suppress
+  // it during a walk so the measurement reflects skill routing, not this hook.
+  if (process.env.CLAUDE_SKILL_GATE_WALK) return;
+
   console.log(`IMPORTANT: This is a session start. You MUST proactively spawn the context agent before responding to the user.
 
 <commentary>

@@ -170,7 +170,7 @@ Establish baseline decisions:
 
 ## Design System Output
 
-Generate `.claude/specs/design/design-system.md`. The frontmatter is required: enforce-specs uses it to auto-load this file whenever a UI file is edited, and that is the mechanism by which project design decisions take precedence over the generic craft floor in `.claude/specs/design/craft/`.
+Generate `.claude/specs/design/design-system.md`. The frontmatter is required: enforce-specs uses it to auto-load this file whenever a UI file is edited, and that is the mechanism by which project design decisions take precedence over the generic craft floor in `.claude/specs/design/craft.md`.
 
 ```markdown
 ---

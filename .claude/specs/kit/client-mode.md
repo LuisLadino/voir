@@ -68,6 +68,29 @@ Hooks carry a `# claude-kit:commit-msg:vN` version marker on the second line. On
 - `🤖 Generated with` attribution markers
 - `.claude/` directory appearing in the client repo's tracked files
 
+## Conductor Workspaces in Client Repos
+
+A Conductor workspace is a git worktree, and `git worktree` checks out tracked files only. In a client repo `.claude/` is excluded, so a fresh workspace gets none of it: no hooks, skills, specs, or CLAUDE.md. The kit never fires there.
+
+Conductor's **Files to copy** closes this. It copies gitignored files from the main checkout into every new workspace, and it accepts directory globs. Set it per client repo so `.claude/**` rides along.
+
+Configure it in Conductor's UI: Settings → the repo → Files to copy → add `.claude/**`. Use the UI, not a committed `.worktreeinclude` or `.conductor/settings.toml`, so the provisioning config never enters the client's repo.
+
+This is required setup when declaring a client project. Without it, the kit lives in the main checkout but is absent from every Conductor workspace, and the agent there runs with no kit at all.
+
+## Issue Filing in Client Mode
+
+The kit's default filing rule (CLAUDE.md, "File GitHub issues by fix destination") sends project-custom items to the active repo. In a client-mode repo the active repo is the **client's** — both client admins can open its Issues tab — so the default leaks the operator's tooling and planning into the client's tracker.
+
+Draw the line by what ships:
+
+- **Touches the client's shipped codebase** — a real bug, feature, perf, or code/docs that commit to the client repo → a GitHub issue in the client repo, as normal. The branch → PR → `Closes #X` flow needs the issue and code in one repo.
+- **Does not ship** — `.claude/` specs, kit tooling, planning notes, workspace decisions → a local notes file at `.claude/docs/workspace-backlog.md`, never the client tracker. `.claude/` is excluded from the client repo, so an issue about a file the client cannot see is pure noise.
+
+Test before `gh issue create` in a client repo: does this fix touch the client's shipped codebase? Yes → client repo. No → `workspace-backlog.md`.
+
+An operator-owned tracker repo was considered and rejected: it breaks the same-repo dependency of the branch/PR/auto-close flow and adds permanent manual friction.
+
 ## Declaring a Client Project
 
 Add the absolute path to both arrays in `sync-kit.sh`:
@@ -83,6 +106,8 @@ CLIENT_PROJECTS=(
 ```
 
 `DOWNSTREAM` controls which projects sync. `CLIENT_PROJECTS` applies client-mode setup to projects that sync. Both entries are required.
+
+Then set Conductor's Files to copy for the repo to `.claude/**`, so each workspace gets the kit. This is required, not optional: see Conductor Workspaces in Client Repos.
 
 ## Non-Negotiable Rules
 

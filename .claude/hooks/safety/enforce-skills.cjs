@@ -142,7 +142,7 @@ function handleHook(data) {
         console.error('  2. Confirm the new branch is intentional and re-commit with:');
         console.error('     SKILL_ACTIVE=1 DOCS_CHECKED=1 BRANCH_VERIFIED=1 git commit ...');
         console.error('  3. Move to an isolated worktree:');
-        console.error(`     node .claude/scripts/worktree.cjs create ${shift.current}`);
+        console.error(`     claude -w ${shift.current}`);
         process.exit(2);
       }
     }

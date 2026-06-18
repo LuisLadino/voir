@@ -70,6 +70,7 @@ Standard labels:
 - **Type:** `type/feature`, `type/bug`, `type/chore`, `type/idea`, `type/tech-debt`
 - **Priority:** `priority/high`, `priority/medium`, `priority/low`
 - **Status:** `status/backlog`, `status/ready`, `status/in-progress`
+- **Lane (workstream):** when `.claude/board.yaml` exists, set exactly one `workstream/<slug>` from the project's lanes. The lane IS the issue's scope — the same "different component or domain" call from §0 that decides whether this is even a new issue. Run `node .claude/hooks/lib/board.cjs workstreams` to list the lanes. This lanes the issue at birth so parallel workspaces stay collision-safe; see `.claude/specs/kit/board-coordination.md`.
 
 ### 3. Create the Issue with Full Context
 
@@ -103,8 +104,10 @@ Starting in **Understand** / **Define** / etc.
 
 - [ ] First step
 - [ ] Second step" \
-  --label "type/feature,priority/medium,status/backlog"
+  --label "type/feature,priority/medium,status/backlog,workstream/<slug>"
 ```
+
+Drop `workstream/<slug>` only when the project has no `.claude/board.yaml`. When a board exists, lane the issue at creation — the `classify-on-create` hook and the session sweep are safety nets, not the primary path.
 
 **Required sections:**
 - **Problem** - The actual issue, not a solution masquerading as a problem

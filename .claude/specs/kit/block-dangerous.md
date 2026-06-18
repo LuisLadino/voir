@@ -87,5 +87,5 @@ The hook reads the JSON at runtime. No code change is required to add a pattern.
 
 - `.claude/specs/kit/owasp-mapping.md` — methodology spec, FM2 subset-qualifier discipline
 - `.claude/specs/kit/sensitive-file-protection.md` — companion gate for sensitive-file Bash writes
-- `.claude/research/product/product-sdk/agent-governance-runtime-security-2026-04.md` — verdict V3 source
+- `cosmo:docs/research/product-sdk/agent-governance-runtime-security-2026-04.md` — verdict V3 source (relocated to the cosmo repo 2026-06-06)
 - #308 V3 — first integration use case for this OWASP mapping methodology

@@ -35,8 +35,8 @@ Run these commands to understand project state:
 # Open issues
 gh issue list --state open --json number,title,labels,milestone --limit 20
 
-# Milestone progress
-gh milestone list --json title,progressPercentage,openIssues,closedIssues
+# Milestone progress. Empty output means the project uses no milestones, not an error.
+gh api repos/:owner/:repo/milestones --jq '.[] | "\(.title): \(.open_issues) open, \(.closed_issues) closed, due \(.due_on // "none")"'
 
 # Open PRs
 gh pr list --state open --json number,title,headRefName

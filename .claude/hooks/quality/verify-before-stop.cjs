@@ -131,13 +131,19 @@ function isInsideRepo(absPath, repoRoot) {
 // Files where stdout is the product, not stray debug logging: hooks log by
 // design, test runners print results, and CLI scripts use stdout as output.
 // #506 added the test-file and .claude/scripts/ exemptions; #557 added the
-// repo-root scripts/ dir, which holds the same kind of tooling.
+// repo-root scripts/ dir, which holds the same kind of tooling; #680 added the
+// Python package CLI entrypoint, whose prints ARE the CLI output.
 function isDebugScanExempt(filePath, repoRoot) {
   // Hook files — hooks legitimately use console.log for output.
   if (filePath.includes('.claude/hooks/')) return true;
 
   // Test files — test runners use console.log to print results.
   if (/\.(test|spec)\.(cjs|js|mjs|ts|tsx)$/.test(filePath)) return true;
+
+  // Python package CLI entrypoint (`python -m pkg` runs `pkg/__main__.py`),
+  // where `print(` is the program's output, not leftover debug. Matched by
+  // basename so it stays precise to the canonical entrypoint. #680
+  if (path.basename(filePath) === '__main__.py') return true;
 
   // Standalone CLI scripts under .claude/scripts/ and .claude/skills/<name>/.
   if (filePath.includes('.claude/scripts/')) return true;

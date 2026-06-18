@@ -49,7 +49,7 @@ function withProject(registryYaml, fn) {
 
 console.log('Bash channel');
 
-test('no pbcopy and no redirect → allow', () => {
+test('non-pbcopy Bash command → allow', () => {
   const r = runHook({
     tool_name: 'Bash',
     tool_input: { command: 'git status' },
@@ -108,7 +108,10 @@ voices:
   });
 });
 
-test('redirect to .md with default Luis voice → block', () => {
+// #743: the Bash content-file redirect channel was removed. Redirects to
+// content files are internal work, not the external publish edge, and the
+// regex was quote-naive. Redirects now always pass; only pbcopy gates Bash.
+test('redirect to a content file → allow (#743 redirect channel removed)', () => {
   withProject(`
 default: luis
 voices:
@@ -117,72 +120,18 @@ voices:
 `, dir => {
     const r = runHook({
       tool_name: 'Bash',
-      tool_input: { command: 'echo content > notes.md' },
-      session_id: 's1'
-    }, { cwd: dir });
-    assert.strictEqual(r.exitCode, 2);
-    assert.ok(r.stderr.includes('VOICE CHECK: luis'));
-  });
-});
-
-test('redirect to .claude/foo.md → allow (Claude-consumed path)', () => {
-  withProject(`
-default: luis
-voices:
-  luis:
-    rules: "L"
-`, dir => {
-    const r = runHook({
-      tool_name: 'Bash',
-      tool_input: { command: 'echo content > .claude/notes.md' },
-      session_id: 's1'
-    }, { cwd: dir });
-    assert.strictEqual(r.exitCode, 0);
-  });
-});
-
-test('redirect to .json → allow (not content extension)', () => {
-  withProject(`
-default: luis
-voices:
-  luis:
-    rules: "L"
-`, dir => {
-    const r = runHook({
-      tool_name: 'Bash',
-      tool_input: { command: 'echo "{}" > config.json' },
-      session_id: 's1'
-    }, { cwd: dir });
-    assert.strictEqual(r.exitCode, 0);
-  });
-});
-
-test('redirect to out-of-tree scratch path (no .claude ancestor) → allow (#631)', () => {
-  // A scratch redirect outside any project tree (e.g. npm logs to /tmp) is shell
-  // mechanics, not content. The target sits directly under os.tmpdir(), a sibling
-  // of the project dir, so it has no .claude ancestor. Pre-fix this blocked
-  // because resolveProjectRoot fell back to a rootless dir and the default Luis
-  // voice applied.
-  withProject(`
-default: luis
-voices:
-  luis:
-    rules: "L"
-`, dir => {
-    const scratch = path.join(os.tmpdir(), 'ev-scratch-' + Date.now() + '.txt');
-    const r = runHook({
-      tool_name: 'Bash',
-      tool_input: { command: `npm run knip > ${scratch}` },
+      tool_input: { command: `echo draft > ${path.join(dir, 'notes.md')}` },
       session_id: 's1'
     }, { cwd: dir });
     assert.strictEqual(r.exitCode, 0,
-      `expected allow for out-of-tree scratch redirect, got ${r.exitCode} stderr=${r.stderr}`);
+      `expected allow for in-tree content redirect after #743, got ${r.exitCode} stderr=${r.stderr}`);
   });
 });
 
-test('redirect to in-tree content file still blocks (#631 guard not over-broad)', () => {
-  // Confirms the #631 out-of-tree skip does not leak into in-tree content. The
-  // target resolves under the project dir (has .claude), so enforcement holds.
+test('redirect path mentioned inside a quoted argument → allow (#743, former false positive)', () => {
+  // The quote-naive redirect regex used to fire when a redirect path merely
+  // appeared inside a quoted argument (a grep pattern, an echoed example),
+  // blocking commands that wrote nothing. With the channel gone, these pass.
   withProject(`
 default: luis
 voices:
@@ -191,12 +140,11 @@ voices:
 `, dir => {
     const r = runHook({
       tool_name: 'Bash',
-      tool_input: { command: `echo draft > ${path.join(dir, 'notes.txt')}` },
+      tool_input: { command: `grep -n "redirect to > notes.md" enforce-voice.cjs` },
       session_id: 's1'
     }, { cwd: dir });
-    assert.strictEqual(r.exitCode, 2,
-      `expected block for in-tree content redirect, got ${r.exitCode} stderr=${r.stderr}`);
-    assert.ok(r.stderr.includes('VOICE CHECK: luis'));
+    assert.strictEqual(r.exitCode, 0,
+      `expected allow for redirect pattern inside a quoted arg, got ${r.exitCode} stderr=${r.stderr}`);
   });
 });
 
@@ -669,31 +617,6 @@ paths:
       tool_name: 'Write',
       tool_input: { file_path: target, content: 'Internal memory note.' },
       session_id: 's-mem'
-    }, { cwd: cwdDir, env: { HOME: fakeHome } });
-    try {
-      assert.strictEqual(r.exitCode, 0, `expected allow, got ${r.exitCode} stderr=${r.stderr}`);
-    } finally {
-      fs.rmSync(fakeHome, { recursive: true, force: true });
-    }
-  });
-});
-
-test('Bash redirect under PROJECTS_DIR memory tree → allow', () => {
-  const rawHome = fs.mkdtempSync(path.join(os.tmpdir(), 'ev-home-'));
-  const fakeHome = fs.realpathSync(rawHome);
-  const memoryDir = path.join(fakeHome, '.claude/projects/test-workspace/memory');
-  fs.mkdirSync(memoryDir, { recursive: true });
-  withProject(`
-default: luis
-voices:
-  luis:
-    rules: "L"
-`, cwdDir => {
-    const target = path.join(memoryDir, 'note.md');
-    const r = runHook({
-      tool_name: 'Bash',
-      tool_input: { command: `echo "stuff" > ${target}` },
-      session_id: 's-mem-bash'
     }, { cwd: cwdDir, env: { HOME: fakeHome } });
     try {
       assert.strictEqual(r.exitCode, 0, `expected allow, got ${r.exitCode} stderr=${r.stderr}`);

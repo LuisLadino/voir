@@ -186,7 +186,7 @@ Items that fail validation are silently dropped from the propagation list. This 
 
 ## See Also: Session Worktrees
 
-The same propagation primitives, `propagateUntrackedContext`, `readDispatchConfig`, `resolveBaseRef`, back the interactive worktree helper at `.claude/scripts/worktree.cjs`. See `session-isolation.md` for the user-facing equivalent of dispatch's worker isolation.
+Interactive parallel sessions use Claude Code's native worktree support (`claude -w`) and Conductor, not a kit CLI. The kit's bespoke interactive helper (`worktree.cjs` + the `/worktree` skill) was retired in #714 once native `claude -w` matured. Dispatch keeps its own `git worktree add` path (above) because it needs a post-creation insertion point for context propagation that the native flag doesn't expose. The shared primitives `propagateUntrackedContext`, `readDispatchConfig`, `resolveBaseRef` stay in `hooks/lib/dispatch.cjs` for that path. See `session-isolation.md` for the interactive posture.
 
 ## Parallel Dispatch Safety
 

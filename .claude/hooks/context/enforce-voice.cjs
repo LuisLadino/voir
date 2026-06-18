@@ -13,21 +13,27 @@
  * enforcement.
  *
  * Channels covered:
- *   - Bash pbcopy
- *   - Bash redirect to content file (`> file.md`, `>> file.md`)
- *   - Write tool
- *   - Edit tool
+ *   - Bash pbcopy: the external publish edge, content leaving the session for a
+ *     reader. Default-enforce with Luis fallback.
+ *   - Write / Edit: opt-in, fire only when the target path matches a `paths:`
+ *     entry in voice.yaml. Default-skip.
+ *
+ * The Bash content-file redirect channel was removed in #743. Redirects to
+ * `.md`/`.mdx`/`.txt` are overwhelmingly internal (notes, logs, generated
+ * docs, scratch), the default-enforce taxed routine work, and the regex was
+ * quote-naive (it fired on a redirect path mentioned inside a quoted argument).
+ * pbcopy stays as the channel that guards content destined for an external
+ * reader; file writes that need voice-checking are opt-in via `paths:`.
  *
  * State lives in the tracking event log as `voice_blocked` events carrying
  * a content hash. Retry with unchanged content is blocked again.
  *
- * Hot-path discipline: the hook short-circuits cheaply when the file is out of
- * scope (non-content ext + no matching path rules) so the common case never
- * pays the YAML parse cost.
+ * Hot-path discipline: the hook short-circuits cheaply when the call is out of
+ * scope (not a pbcopy sink, or a Write/Edit with no matching path rule) so the
+ * common case never pays the YAML parse cost.
  */
 
 const crypto = require('crypto');
-const fs = require('fs');
 const path = require('path');
 
 const {
@@ -38,7 +44,7 @@ const {
   PROJECTS_DIR
 } = require('../lib/session-utils.cjs');
 
-const { resolveVoice, registryHasPathRules, toRelative, resolveProjectRoot } = require('../lib/voice-registry.cjs');
+const { resolveVoice, registryHasPathRules, resolveProjectRoot } = require('../lib/voice-registry.cjs');
 
 // Auto-memory tree under ~/.claude/projects/<workspace>/memory/ is Claude's own
 // internal state. Writes there are never external content. No voice.yaml rule
@@ -53,38 +59,6 @@ function isUnderProjectsTree(filePath) {
   try { resolved = path.resolve(filePath); } catch { return false; }
   if (resolved === PROJECTS_DIR_RESOLVED) return false;
   return resolved.startsWith(PROJECTS_DIR_RESOLVED + path.sep);
-}
-
-// True when some ancestor of absPath holds a `.claude` directory, i.e. the path
-// lives inside a project tree. Walks the real filesystem rather than
-// resolveProjectRoot, which short-circuits to CLAUDE_PROJECT_DIR and otherwise
-// falls back to the path's own dir (never null), so it cannot tell a scratch
-// target from project content. A `> /tmp/k.txt` redirect has no project
-// ancestor; an in-tree or cross-repo content file does. (#631)
-function hasProjectAncestor(absPath) {
-  let dir = path.dirname(absPath);
-  for (let i = 0; i < 40; i++) {
-    if (fs.existsSync(path.join(dir, '.claude'))) return true;
-    const parent = path.dirname(dir);
-    if (parent === dir) return false;
-    dir = parent;
-  }
-  return false;
-}
-
-const CONTENT_EXTENSIONS = new Set(['.md', '.mdx', '.txt']);
-
-// Paths under these prefixes, or these exact filenames, are Claude-consumed
-// instructions. The self-documentation spec governs format; voice rules do not
-// apply. Root CLAUDE.md is included because it's Claude's per-project
-// instruction file, not external content.
-const VOICE_SKIP_PATH_PREFIXES = ['.claude/', '.github/'];
-const VOICE_SKIP_FILENAMES = new Set(['CLAUDE.md']);
-
-function isClaudeConsumedPath(relPath) {
-  if (!relPath) return false;
-  if (VOICE_SKIP_FILENAMES.has(relPath)) return true;
-  return VOICE_SKIP_PATH_PREFIXES.some(p => relPath.startsWith(p));
 }
 
 const { runStdinHook } = require('../lib/stdin-hook.cjs');
@@ -145,42 +119,18 @@ function handleBash(data) {
   const command = tool_input?.command;
   if (!command) process.exit(0);
 
-  const pbcopyMatch = detectsPbcopySink(command);
-  const redirectMatch = command.match(/>>?\s*["']?([^\s"'|&;]+\.(?:md|mdx|txt))["']?/);
-  if (!pbcopyMatch && !redirectMatch) process.exit(0);
+  // pbcopy is the only gated Bash channel: the external publish edge, where
+  // content leaves the session for a reader. Everything else passes. The
+  // content-file redirect channel was removed in #743 (see header).
+  if (!detectsPbcopySink(command)) process.exit(0);
 
   const envMatch = command.match(/(?:^|\s)VOICE=(["']?)([^\s"']+)\1/);
   const envVar = envMatch ? envMatch[2] : null;
-  const filePathRaw = redirectMatch ? redirectMatch[1] : null;
 
-  // Auto-memory tree skip for Bash redirects too.
-  if (filePathRaw && isUnderProjectsTree(filePathRaw)) process.exit(0);
-
-  // A redirect whose target has no .claude ancestor is a scratch file outside
-  // any project (e.g. `npm run knip > /tmp/k.txt`, `> $TMPDIR/out.txt`), not
-  // content to voice-check. Skip, mirroring the auto-memory skip above. pbcopy
-  // (filePathRaw null) and in-tree / cross-repo content redirects are
-  // unaffected. (#631)
-  if (filePathRaw && !hasProjectAncestor(path.resolve(filePathRaw))) process.exit(0);
-
-  // Resolve target repo root from redirect path when present. pbcopy without
-  // a redirect falls back to cwd-based resolution, which is correct because
-  // pbcopy is an act of the current session.
-  const targetRoot = filePathRaw ? resolveProjectRoot(filePathRaw) : undefined;
-  const filePathRel = filePathRaw ? toRelative(filePathRaw, targetRoot) : null;
-
-  // Redirect into a Claude-consumed path skips, unless an env var or path rule
-  // upgrades the voice explicitly.
-  if (filePathRel && isClaudeConsumedPath(filePathRel) && !envVar) {
-    if (!registryHasPathRules(targetRoot)) process.exit(0);
-  }
-
-  const voice = resolveVoice({ filePath: filePathRaw, envVar, projectRoot: targetRoot });
-
-  if (filePathRel && isClaudeConsumedPath(filePathRel)
-      && voice.source !== 'path' && voice.source !== 'env') {
-    process.exit(0);
-  }
+  // pbcopy is an act of the current session, so voice resolves against cwd:
+  // the registry default plus any VOICE= override. There is no file path to
+  // route on.
+  const voice = resolveVoice({ envVar });
 
   if (voice.rules === null) process.exit(0);
 
@@ -201,7 +151,7 @@ function handleBash(data) {
   }
 
   recordBlock(session_id, commandHash);
-  console.error(bashReminder(voice, Boolean(pbcopyMatch)));
+  console.error(bashReminder(voice));
   process.exit(2);
 }
 
@@ -264,10 +214,9 @@ function handleFileWrite(data) {
   process.exit(0);
 }
 
-function bashReminder(voice, isPbcopy) {
-  const action = isPbcopy ? 'copying to clipboard' : 'writing to a content file';
+function bashReminder(voice) {
   const lines = [
-    `[VOICE CHECK: ${voice.name}] Content is ${action}.`,
+    `[VOICE CHECK: ${voice.name}] Content is copying to clipboard.`,
     `Resolved via ${voice.source}. Review against voice rules:`,
     '',
     voice.rules,

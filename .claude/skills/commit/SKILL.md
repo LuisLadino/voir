@@ -104,7 +104,7 @@ If the hook also reports `[BRANCH SHIFTED]`, the session's branch changed betwee
 
 `SKILL_ACTIVE=1 DOCS_CHECKED=1 BRANCH_VERIFIED=1 git commit -m "..."`
 
-If the branch is wrong, run `git checkout <starting-branch>` first, or use `.claude/scripts/worktree.cjs create` to isolate this session.
+If the branch is wrong, run `git checkout <starting-branch>` first, or start an isolated session with `claude -w <branch>`.
 
 ### 5. Push
 
@@ -191,11 +191,29 @@ Addresses #X
 
 ### 8. Enable Auto-merge
 
+**First, detect a linked worktree.** Conductor and `claude -w` sessions run in a linked git worktree while the base branch stays checked out in the canonical clone. `--delete-branch` makes `gh` switch the local checkout to the base after merge, and git refuses to check out a branch held by another worktree, so the merge errors with `'main' is already used by worktree`. Decide the branch-cleanup path up front and reuse it below:
+
 ```bash
-gh pr merge --auto --squash --delete-branch
+BRANCH=$(git branch --show-current)
+# A linked worktree's git dir contains a `gitdir` file; the primary checkout's does not.
+if [ -f "$(git rev-parse --absolute-git-dir)/gitdir" ]; then WORKTREE=1; else WORKTREE=0; fi
 ```
 
-This queues the PR to merge automatically after CI checks pass.
+In a worktree, NEVER pass `--delete-branch`. Delete the branch server-side after the merge lands instead. Outside one, `--delete-branch` is safe:
+
+```bash
+if [ "$WORKTREE" = 1 ]; then
+  gh pr merge --auto --squash
+else
+  gh pr merge --auto --squash --delete-branch
+fi
+```
+
+This queues the PR to merge automatically after CI checks pass. In a worktree, clean the branch once Step 9's watcher confirms the merge, or rely on the repo's "Automatically delete head branches" setting:
+
+```bash
+gh api -X DELETE "repos/{owner}/{repo}/git/refs/heads/$BRANCH"   # worktree only, after merge confirmed
+```
 
 **Fallback when auto-merge is unavailable.** If the command fails with `Auto merge is not allowed for this repository`, the repo has the "Allow auto-merge" setting off. This is expected on repos that have not enabled it — not a flow error. Two paths:
 
@@ -203,9 +221,14 @@ This queues the PR to merge automatically after CI checks pass.
   ```bash
   gh repo edit --enable-auto-merge
   ```
-- Per-PR fallback: wait for CI, then merge directly.
+- Per-PR fallback: wait for CI, then merge directly. The same worktree rule applies:
   ```bash
-  gh pr checks --watch && gh pr merge --squash --delete-branch
+  gh pr checks --watch
+  if [ "$WORKTREE" = 1 ]; then
+    gh pr merge --squash && gh api -X DELETE "repos/{owner}/{repo}/git/refs/heads/$BRANCH"
+  else
+    gh pr merge --squash --delete-branch
+  fi
   ```
 
 Either way, continue to step 9.

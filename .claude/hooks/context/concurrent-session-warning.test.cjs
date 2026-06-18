@@ -58,7 +58,7 @@ test('warningText includes all other session pids', () => {
   const text = warningText(others, '/tmp/repo');
   assert.ok(text.includes('1234'));
   assert.ok(text.includes('5678'));
-  assert.ok(text.includes('worktree.cjs'));
+  assert.ok(text.includes('claude -w'));
 });
 
 test('stale markers older than 24h are pruned even if PID is live', () => {
