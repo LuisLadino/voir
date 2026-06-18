@@ -1,0 +1,9 @@
+"$schema" = "https://conductor.build/schemas/settings.repo.schema.json"
+
+# Kit workspace-currency (claude-kit #746, personal-mode). New workspaces already
+# branch from origin/main, so they are born on the current kit. This setup script
+# keeps the long-lived ROOT checkout current too, because that root is the
+# /kit-sync source and the kit-drift reference. No file copy, no sync-kit here.
+# See .claude/specs/kit/session-isolation.md Layer 6.
+[scripts]
+setup = "git -C \"$CONDUCTOR_ROOT_PATH\" fetch --prune origin && git -C \"$CONDUCTOR_ROOT_PATH\" pull --ff-only || true"
