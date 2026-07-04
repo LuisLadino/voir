@@ -16,8 +16,6 @@ const { loadExtendedSkills, normalizeSkillName } = require('../lib/skill-frontma
 const { resolveScope } = require('../lib/skill-active.cjs');
 const runtime = require('../lib/skill-runtime.cjs');
 
-runStdinHook(handleHook, { mode: 'observability' });
-
 function buildBlock(skill, scope, projectRoot, sessionId) {
   const ext = skill.extensions;
   const lines = [`[SKILL RUNTIME — /${skill.skillName}]`];
@@ -83,3 +81,9 @@ function handleHook(data) {
   }));
   process.exit(0);
 }
+
+if (require.main === module) {
+  runStdinHook(handleHook, { mode: 'observability' });
+}
+
+module.exports = { handleHook, buildBlock };

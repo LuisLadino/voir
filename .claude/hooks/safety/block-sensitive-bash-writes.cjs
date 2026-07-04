@@ -26,25 +26,14 @@
  * Spec: .claude/specs/kit/sensitive-file-protection.md
  */
 
+const { stripHeredocs } = require('../lib/command-position.cjs');
+
 const SENSITIVE_PATH_TOKEN_RE =
   /^(?:(?:\.{1,2}\/)+)?(?:\.claude|~\/\.claude|\/Users\/[^/]+\/\.claude)\/(?:hooks\/.+\.(?:cjs|js|sh|mjs)|settings(?:\.local)?\.json)$/;
 
 function isSensitivePath(value) {
   if (typeof value !== 'string') return false;
   return SENSITIVE_PATH_TOKEN_RE.test(value.trim());
-}
-
-// Strip heredoc bodies before tokenizing so body lines aren't parsed as shell
-// syntax. Preserves the operator line (including any same-line redirects), so
-// `cat <<EOF > /tmp/x\n...body...\nEOF` keeps `cat <<EOF > /tmp/x\n` and the
-// downstream redirect target still gets checked. Delimiter is captured as
-// `\w+` which covers identifier-style heredoc tags (the dominant case).
-function stripHeredocBodies(input) {
-  if (typeof input !== 'string') return '';
-  return input.replace(
-    /(<<-?\s*['"]?(\w+)['"]?[^\n]*\n)[\s\S]*?\n[ \t]*\2\b[ \t]*\n?/g,
-    (_match, head) => head
-  );
 }
 
 // Tokenize a Bash command into segments. Each segment:
@@ -364,7 +353,7 @@ function getWriteTargets(segment, depth = 0) {
   if (SHELL_WRAPPERS.has(cmd)) {
     const cIdx = args.findIndex(a => a === '-c');
     if (cIdx >= 0 && cIdx + 1 < args.length) {
-      const subSegments = parseShell(stripHeredocBodies(args[cIdx + 1]));
+      const subSegments = parseShell(stripHeredocs(args[cIdx + 1], { mode: 'preserve-operator' }));
       for (const seg of subSegments) {
         const subTargets = getWriteTargets(seg, depth + 1);
         for (const t of subTargets) targets.push({ kind: `${cmd} -c ${t.kind}`, value: t.value });
@@ -436,7 +425,7 @@ function detectSensitiveWrite(command) {
 
   let segments;
   try {
-    segments = parseShell(stripHeredocBodies(command));
+    segments = parseShell(stripHeredocs(command, { mode: 'preserve-operator' }));
   } catch {
     return null;
   }
@@ -473,4 +462,4 @@ if (require.main === module) {
   runStdinHook(handleHook, { mode: 'gating' });
 }
 
-module.exports = { detectSensitiveWrite, parseShell, getWriteTargets, isSensitivePath, stripHeredocBodies };
+module.exports = { detectSensitiveWrite, parseShell, getWriteTargets, isSensitivePath };

@@ -41,11 +41,23 @@ Before committing, verify documentation reflects the changes.
 
 **Step 3a: Determine what changed.**
 
+Two routers decide what to check. The change-type router (below) covers CHANGELOG and README. The declared-path router (Step 3a-cov) covers operating docs that declared the code they document.
+
 From the diff, classify the change:
 - Feature or fix → CHANGELOG.md MUST have an entry
 - Structural change (new dirs, renamed modules) → README.md likely needs updating
 - API/interface change → component specs may be stale
 - New component/module → component spec may be needed (see /sync-stack Step 9)
+
+**Step 3a-cov: Operating-doc coverage (declared-path router).**
+
+Operating docs — runbooks, setup, config reference, deploy, schema — declare the code they document with `covers:` frontmatter. When the diff touches a declared path, that doc may be stale. Find the affected docs:
+
+```bash
+node .claude/hooks/lib/doc-coverage.cjs
+```
+
+It prints each doc whose `covers:` globs intersect the current changes. MUST read every doc it lists and update whatever the change staled — the exact commands, endpoints, flags, or schema fields. If a new high-coupling component (runtime, connector, deploy, schema, CLI) has no covering doc at all, create one via /build — born-annotated with `covers:` per the Authoring section of `.claude/specs/kit/doc-coverage.md` — or file a tracked issue; do not leave it uncovered silently. The convention and which docs warrant `covers:` are in that same spec.
 
 **Step 3b: Read and check each file.**
 
@@ -73,6 +85,7 @@ DOCUMENTATION CHECK:
 - CHANGELOG.md: [added entry / still accurate / created / N/A]
 - README.md: [updated / still accurate / N/A]
 - Component specs: [updated X / still accurate / N/A]
+- Operating docs (covers:): [verified X / updated X / none matched]
 ```
 
 ### 3.5. Spec Conformance Pass (MANDATORY — do not skip)
@@ -88,6 +101,16 @@ For each spec whose `applies_to` matches a file in this diff:
 3. If the spec documents a standard and the line carries a value not on that standard — even one inherited unchanged from the surrounding code — call it out and fix it before staging.
 
 If the conformance hook blocks the commit, fix the reported violations and re-stage. Do not retry with `--no-verify`. Do not amend the rule to silence the report unless the documented standard has actually shifted. If it has, update the spec prose alongside the rule in the same commit.
+
+### 3.6. Release Cadence Check (non-blocking)
+
+CHANGELOG `[Unreleased]` grows on every commit and must be cut into a dated version once it crosses the threshold (CONTRIBUTING.md "Releases"). After the documentation check, run the shared counter:
+
+```bash
+node .claude/hooks/lib/release-cadence.cjs
+```
+
+If the output begins with `[RELEASE]`, `[Unreleased]` has crossed the threshold — surface that line to the user and point at CONTRIBUTING.md "Releases" for the cut steps. This is advisory: NEVER block, delay, or amend the commit for it. Otherwise the output reports below-threshold; continue.
 
 ### 4. Stage and Commit
 
@@ -267,6 +290,15 @@ You don't wait for it. Continue with other work. The Monitor runs in the backgro
 ### 10. Done
 
 Show the PR URL. The Monitor continues in the background and will notify you when the ship settles.
+
+### 11. After the merge: Continue or Archive, never keep working
+
+A Conductor or `claude -w` workspace maps to one branch and one PR, and must never outlive its merge. Continuing to commit in a merged workspace leaves its branch behind `main` while other workspaces merge ahead, and the drift accumulates. When the merge lands, surface the two correct exits to the operator:
+
+- **Continue** — continue on a *new* branch off freshly-fetched `main`, carrying the same chat. Use for a tight follow-up where the conversation context is worth keeping; the base is current and the merged work is behind you.
+- **Archive** — the unit is done; the workspace leaves the active list, restorable from History with its chat intact. The next unit opens a fresh workspace whose context comes from the GitHub issue and `/board <tag>`.
+
+Never keep working in the merged workspace. See `.claude/specs/kit/session-isolation.md` "The post-merge discipline" for the full rationale.
 
 ## Deploy Configuration (optional)
 

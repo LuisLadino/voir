@@ -26,8 +26,8 @@ function withGitRepo(fn) {
   const work = path.join(base, 'work');
   fs.mkdirSync(path.join(work, '.claude'), { recursive: true });
   try {
-    sh(base, 'git', 'init', '--bare', origin);
-    sh(work, 'git', 'init');
+    sh(base, 'git', 'init', '--bare', '-b', 'main', origin);
+    sh(work, 'git', 'init', '-b', 'main');
     sh(work, 'git', 'config', 'user.email', 't@t.t');
     sh(work, 'git', 'config', 'user.name', 'T');
     sh(work, 'git', 'config', 'commit.gpgsign', 'false');

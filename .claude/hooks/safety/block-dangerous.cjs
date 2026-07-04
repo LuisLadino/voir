@@ -7,12 +7,17 @@
  * Purpose: Prevents execution of dangerous commands
  *
  * Reads patterns from config/security-patterns.json (dangerous_commands section).
- * Blocks destructive file ops, force pushes, database drops,
- * credential exposure, and system damage commands.
+ * Blocks destructive file ops, force pushes, database drops, credential
+ * exposure, and system damage commands.
+ *
+ * Heredoc bodies are stripped (placeholder mode) before matching so a dangerous
+ * pattern documented inside a heredoc example does not false-positive. The
+ * shared stripper lives in command-position.cjs (#769).
  */
 
 const fs = require('fs');
 const path = require('path');
+const { stripHeredocs } = require('../lib/command-position.cjs');
 
 function loadPatterns() {
   const configPath = path.join(__dirname, '..', 'config', 'security-patterns.json');
@@ -29,33 +34,35 @@ function loadPatterns() {
   }
 }
 
-const { runStdinHook } = require('../lib/stdin-hook.cjs');
-runStdinHook(handleHook, { mode: 'gating' });
+// Returns { reason } for the first matching dangerous pattern, else null.
+// Heredoc bodies are neutralized first so an embedded example never trips a
+// pattern that real execution would not.
+function detectDangerous(command) {
+  if (typeof command !== 'string' || !command) return null;
+  const commandToCheck = stripHeredocs(command, { mode: 'placeholder' });
+  for (const { pattern, reason } of loadPatterns()) {
+    if (pattern.test(commandToCheck)) return { reason };
+  }
+  return null;
+}
 
 function handleHook(data) {
-  const { tool_input } = data;
-  const command = tool_input?.command;
-
+  const command = data && data.tool_input && data.tool_input.command;
   if (!command) {
     process.exit(0);
   }
-
-  // Strip heredoc content to avoid false positives on embedded examples.
-  const commandToCheck = stripHeredocs(command);
-
-  const patterns = loadPatterns();
-
-  for (const { pattern, reason } of patterns) {
-    if (pattern.test(commandToCheck)) {
-      console.error(`[BLOCKED] ${reason}`);
-      console.error(`Command: ${command}`);
-      process.exit(2);
-    }
+  const hit = detectDangerous(command);
+  if (hit) {
+    console.error(`[BLOCKED] ${hit.reason}`);
+    console.error(`Command: ${command}`);
+    process.exit(2);
   }
-
   process.exit(0);
 }
 
-function stripHeredocs(cmd) {
-  return cmd.replace(/<<-?\s*['"]?(\w+)['"]?[\s\S]*?\n\1(?:\s*\).*)?$/gm, '<<HEREDOC_STRIPPED');
+if (require.main === module) {
+  const { runStdinHook } = require('../lib/stdin-hook.cjs');
+  runStdinHook(handleHook, { mode: 'gating' });
 }
+
+module.exports = { detectDangerous, handleHook };

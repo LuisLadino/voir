@@ -1,7 +1,7 @@
 ---
 name: delegation-level
 description: >
-  Name the delegation level before handing work off. Triggers: "have the agent", "let the agent", "spin up a subagent", "have Claude", "async this". Decide, recommend, or just execute.
+  Name the delegation level before handing work off. Triggers: "have the agent", "let the agent", "spin up a subagent", "have Claude", "async this". One of four: execute, report, recommend, decide.
 ---
 
 # Delegation Level

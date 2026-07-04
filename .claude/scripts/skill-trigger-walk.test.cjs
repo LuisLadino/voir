@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 
 const assert = require('assert');
-const { parseEvalMarkdown, decideFromEvents, parseArgs } = require('./skill-trigger-walk.cjs');
+const { parseEvalMarkdown, decideFromEvents, parseArgs, planSessions } = require('./skill-trigger-walk.cjs');
 
 let passed = 0;
 let failed = 0;
@@ -140,6 +140,42 @@ test('parses --eval, --model, --runs, --json', () => {
 test('malformed --runs falls back to 3, never NaN', () => {
   assert.strictEqual(parseArgs(['s', '--runs', 'abc']).runs, 3);
   assert.strictEqual(parseArgs(['s', '--runs', '0']).runs, 3);
+});
+
+test('timeoutMs defaults to 120000 and parses --timeout', () => {
+  assert.strictEqual(parseArgs(['s']).timeoutMs, 120000);
+  assert.strictEqual(parseArgs(['s', '--timeout', '30000']).timeoutMs, 30000);
+});
+
+test('malformed --timeout falls back to 120000, never NaN', () => {
+  assert.strictEqual(parseArgs(['s', '--timeout', 'abc']).timeoutMs, 120000);
+  assert.strictEqual(parseArgs(['s', '--timeout', '0']).timeoutMs, 120000);
+});
+
+test('maxSessions defaults to null and parses --max-sessions', () => {
+  assert.strictEqual(parseArgs(['s']).maxSessions, null);
+  assert.strictEqual(parseArgs(['s', '--max-sessions', '50']).maxSessions, 50);
+});
+
+test('malformed --max-sessions falls back to null', () => {
+  assert.strictEqual(parseArgs(['s', '--max-sessions', 'abc']).maxSessions, null);
+  assert.strictEqual(parseArgs(['s', '--max-sessions', '0']).maxSessions, null);
+});
+
+console.log('planSessions');
+
+test('planSessions estimates phrases x runs', () => {
+  assert.strictEqual(planSessions(10, 3, null).estimate, 30);
+});
+
+test('planSessions is not exceeded when no cap is set', () => {
+  assert.strictEqual(planSessions(10, 3, null).exceeded, false);
+});
+
+test('planSessions flags an over-cap estimate; equal is allowed', () => {
+  assert.strictEqual(planSessions(10, 3, 20).exceeded, true);
+  assert.strictEqual(planSessions(10, 3, 30).exceeded, false);
+  assert.strictEqual(planSessions(10, 3, 31).exceeded, false);
 });
 
 console.log(`\n${passed} passed, ${failed} failed`);

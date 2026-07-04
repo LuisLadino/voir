@@ -22,6 +22,7 @@ const crypto = require('crypto');
 const { execSync } = require('child_process');
 
 const skillTelemetry = require('./skill-telemetry.cjs');
+const { stripHeredocs } = require('./command-position.cjs');
 
 const HOME = process.env.HOME || process.env.USERPROFILE;
 const PROJECTS_DIR = path.join(HOME, '.claude/projects');
@@ -640,7 +641,9 @@ function logError(hook, message, workspacePath) {
  *   -f message= / -F message=         (gh api)
  */
 function stripCommandContent(cmd) {
-  let stripped = cmd.replace(/<<-?\s*['"]?(\w+)['"]?[\s\S]*?\n\1(?:\s*\).*)?$/gm, '<<HEREDOC_STRIPPED');
+  // Heredoc stripping is shared from command-position.cjs (#769); the
+  // content-flag truncation below is this function's own layer on top.
+  let stripped = stripHeredocs(cmd, { mode: 'placeholder' });
   const contentFlagMatch = stripped.match(
     /(?:^|\s)--(body|comment|message)[\s=]|(?:^|\s)-m[\s"']|(?:^|\s)-[fF]\s+(body|message)=/
   );

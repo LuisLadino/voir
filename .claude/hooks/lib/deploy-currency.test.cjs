@@ -177,8 +177,8 @@ function withGitRepo(fn) {
   const work = path.join(base, 'work');
   fs.mkdirSync(work, { recursive: true });
   try {
-    run(base, 'git', 'init', '--bare', origin);
-    run(work, 'git', 'init');
+    run(base, 'git', 'init', '--bare', '-b', 'main', origin);
+    run(work, 'git', 'init', '-b', 'main');
     run(work, 'git', 'config', 'user.email', 't@t.t');
     run(work, 'git', 'config', 'user.name', 'T');
     run(work, 'git', 'config', 'commit.gpgsign', 'false');

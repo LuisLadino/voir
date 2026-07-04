@@ -194,7 +194,7 @@ Complete [task description] by [how to do it].
 
 Different types of instructions go in different places based on how reliably they need to be followed:
 
-- **System prompt** (`--append-system-prompt`) — Non-negotiable behaviors, core identity. Primacy effect gives beginning of context the most attention.
+- **System prompt** (`--append-system-prompt`) — Non-negotiable behaviors that need system-message placement. Primacy effect gives beginning of context the most attention. Launcher-dependent: does not load under Conductor or GUI launchers that bypass the shell rc, so core identity and any must-load-everywhere rule belong in `~/.claude/CLAUDE.md` instead. Full caveat: `.claude/docs/prompt-format-guide.md`.
 - **CLAUDE.md** — Project-specific behavioral constraints. Loaded per-project, reread every turn, never cached. Use the Tier 1 inclusion filter from the self-documentation spec.
 - **Hook injection** — Dynamic context, current task state, per-prompt reminders. Changes per-session or per-prompt.
 - **Skills/Agents** — Task-specific procedures. Loaded on demand when activated.
@@ -204,7 +204,7 @@ Different types of instructions go in different places based on how reliably the
 - Middle: 40-60% accuracy
 - End: 75-85% accuracy
 
-Put critical instructions at the beginning (system prompt) or end (closing directive), not buried in the middle.
+Put critical instructions at the beginning or end of context, not buried in the middle. The system prompt and the top of CLAUDE.md sit near the beginning; a closing directive sits at the end. Under a launcher where the system prompt does not load, the top of CLAUDE.md is the only beginning slot.
 
 ## Token Budget Awareness
 

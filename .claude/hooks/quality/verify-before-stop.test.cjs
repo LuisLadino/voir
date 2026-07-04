@@ -24,7 +24,8 @@ const {
   buildSentinelRegex,
   getRepoRoot,
   isInsideRepo,
-  isDebugScanExempt
+  isDebugScanExempt,
+  checkForDebugStatements
 } = require('./verify-before-stop.cjs');
 
 let pass = 0;
@@ -504,6 +505,82 @@ try {
     '#604: dedup — same skill via both paths counts once',
     dedupedResult.length === 0,
     `got ${JSON.stringify(dedupedResult)}`
+  );
+
+  // #838: the debug-statement detector must not match a keyword that is the
+  // tail of a larger identifier. The reported regression: `print(` matched
+  // `fingerprint(`. Each keyword pattern is now guarded by `(?<!\w)`.
+  const writeSrc = (name, body) => {
+    const p = path.join(tmpDir, name);
+    fs.writeFileSync(p, body);
+    return p;
+  };
+
+  // Python: fingerprint/footprint/blueprint calls (all end in `print(`) clean.
+  const pyClean = writeSrc('breaker.py', [
+    'def fingerprint(name, args):',
+    '    keys = [fingerprint(c["name"], c["args"]) for c in calls]',
+    '    return footprint(keys) + blueprint(keys)',
+  ].join('\n'));
+  report(
+    '#838: fingerprint/footprint/blueprint( do NOT match the print detector',
+    checkForDebugStatements(pyClean, null).length === 0,
+    `got ${JSON.stringify(checkForDebugStatements(pyClean, null))}`
+  );
+
+  // Python: a real print( call is still flagged.
+  const pyPrint = writeSrc('service.py', 'def run(x):\n    print("debug", x)\n');
+  const pyPrintHits = checkForDebugStatements(pyPrint, null);
+  report(
+    '#838: a real print( call is still flagged',
+    pyPrintHits.length === 1 && pyPrintHits[0].line === 2,
+    `got ${JSON.stringify(pyPrintHits)}`
+  );
+
+  // Python: print(..., file=...) remains exempt — legit stderr logging.
+  const pyPrintFile = writeSrc('logger.py', 'print("err", file=sys.stderr)\n');
+  report(
+    '#838: print(..., file=...) is not flagged',
+    checkForDebugStatements(pyPrintFile, null).length === 0,
+    `got ${JSON.stringify(checkForDebugStatements(pyPrintFile, null))}`
+  );
+
+  // Ruby: `inputs ` ends in `puts ` but must not match the puts detector.
+  const rbClean = writeSrc('form.rb', 'inputs first_name, last_name\n');
+  report(
+    '#838: Ruby `inputs ` does not match the `puts ` detector',
+    checkForDebugStatements(rbClean, null).length === 0,
+    `got ${JSON.stringify(checkForDebugStatements(rbClean, null))}`
+  );
+
+  // Ruby: a real `puts ` statement is still flagged.
+  const rbPuts = writeSrc('debug.rb', 'puts "value is #{x}"\n');
+  report(
+    '#838: Ruby real `puts ` is still flagged',
+    checkForDebugStatements(rbPuts, null).length === 1,
+    `got ${JSON.stringify(checkForDebugStatements(rbPuts, null))}`
+  );
+
+  // JS: `myconsole.log(` (suffix identifier) clean; real console.log still flagged.
+  const jsClean = writeSrc('widget.js', 'const myconsole = mk(); myconsole.log("x");\n');
+  report(
+    '#838: JS `myconsole.log(` does not match the console.log detector',
+    checkForDebugStatements(jsClean, null).length === 0,
+    `got ${JSON.stringify(checkForDebugStatements(jsClean, null))}`
+  );
+  const jsLog = writeSrc('widget2.js', 'function f() { console.log("x"); }\n');
+  report(
+    '#838: JS real console.log( is still flagged',
+    checkForDebugStatements(jsLog, null).length === 1,
+    `got ${JSON.stringify(checkForDebugStatements(jsLog, null))}`
+  );
+
+  // JS: a method/property access still matches — `this.console.log(` is a real call.
+  const jsThis = writeSrc('widget3.js', 'class C { f() { this.console.log("x"); } }\n');
+  report(
+    '#838: JS `this.console.log(` (non-word char before keyword) is still flagged',
+    checkForDebugStatements(jsThis, null).length === 1,
+    `got ${JSON.stringify(checkForDebugStatements(jsThis, null))}`
   );
 
 } finally {

@@ -111,10 +111,11 @@ The sweep runs as a best-effort wrapper, `try { pruneActive(projectRoot); } catc
 Every worker receives a prompt with these sections:
 
 1. **Target clause.** Issue number plus repo, or ad-hoc task description.
-2. **Workflow clause.** Explicit ordering: `/research`, `/define`, `/ideate`, `/build`, `/test`, `/review`, `/commit`.
-3. **Autonomy clause.** Worker has autonomy on standard dev decisions. Must flag taste calls, scope expansion, and ambiguity under `decisions_needing_review`.
-4. **Output schema clause.** Worker must emit a single JSON object at the end matching the result schema.
-5. **Subagent clause.** Worker may use the Agent tool for internal parallel work, for example review spawns or research threads.
+2. **Orientation clause.** Pins every project file the worker writes or edits under its worktree cwd; forbids constructing or reusing an absolute path into a parent, sibling, or canonical checkout; and tells the worker to treat any absolute out-of-tree path it reads (issue body, spec, propagated context) as stale and rebase it onto cwd. User-scope `~/.claude/` files such as memory are carved out. This is the #797 cure for the parent-tree write misfire — it covers the two residual, non-scrubbable sources (a stale absolute path in runtime-read text, and a model early-orientation misfire) that remain after every dispatch-injected surface (prompt, argv, env) was audited clean.
+3. **Workflow clause.** Explicit ordering: `/research`, `/define`, `/ideate`, `/build`, `/test`, `/review`, `/commit`.
+4. **Autonomy clause.** Worker has autonomy on standard dev decisions. Must flag taste calls, scope expansion, and ambiguity under `decisions_needing_review`.
+5. **Output schema clause.** Worker must emit a single JSON object at the end matching the result schema.
+6. **Subagent clause.** Worker may use the Agent tool for internal parallel work, for example review spawns or research threads.
 
 For ad-hoc targets with `track: true` (default), prompt includes a pre-step to create a GitHub issue before proceeding through the workflow.
 
@@ -186,16 +187,17 @@ Items that fail validation are silently dropped from the propagation list. This 
 
 ## See Also: Session Worktrees
 
-Interactive parallel sessions use Claude Code's native worktree support (`claude -w`) and Conductor, not a kit CLI. The kit's bespoke interactive helper (`worktree.cjs` + the `/worktree` skill) was retired in #714 once native `claude -w` matured. Dispatch keeps its own `git worktree add` path (above) because it needs a post-creation insertion point for context propagation that the native flag doesn't expose. The shared primitives `propagateUntrackedContext`, `readDispatchConfig`, `resolveBaseRef` stay in `hooks/lib/dispatch.cjs` for that path. See `session-isolation.md` for the interactive posture.
+Interactive parallel sessions use Claude Code's native worktree support (`claude -w`) and Conductor, not a kit CLI. The kit's bespoke interactive helper, `.claude/scripts/worktree.cjs` plus the `/worktree` skill, was retired in #714 once native `claude -w` matured. Dispatch keeps its own `git worktree add` path (above) because it needs a post-creation insertion point for context propagation that the native flag doesn't expose. The dispatch-specific primitives `propagateUntrackedContext`, `readDispatchConfig`, `resolveBaseRef` stay in `hooks/lib/dispatch.cjs` for that path. The raw `git worktree add / remove / prune` plus `branch -D` mechanics are instead shared with `kit-fleet.cjs` via `hooks/lib/worktree.cjs` (#809), a different file from the retired interactive CLI. `prepareWorktree` and `cleanupWorktree` wrap those primitives and keep dispatch's `-b` create-fail-if-exists semantics, the propagation step, and the #791 reap guard, passed as `safeRemove`'s `pidGuard`. See `session-isolation.md` for the interactive posture.
 
 ## Parallel Dispatch Safety
 
 Every worker runs in its own worktree. Invariants:
 
 - Worker cwd is `<repo>/.claude/worktrees/dispatch-<sessionId>/`, not the orchestrator's cwd
+- Worker `CLAUDE_PROJECT_DIR` is overridden to the worktree path in `buildWorkerEnv`, never inherited from the orchestrator. The var is on `WORKER_ENV_ALLOWLIST` and `resolveProjectRoot` returns it before any cwd walk, so an inherited orchestrator value would point every worker hook at the parent dir. Dormant under Conductor where `CLAUDE_PROJECT_DIR` is unset; defensive against any orchestrator that sets it (#796)
 - Worker branches from `origin/HEAD` (typically `main`), not from whatever branch the orchestrator is on
 - Worker's `/build` creates a feature branch inside its worktree. That branch is visible to all worktrees in the repo, same `.git` dir, but the files on disk are isolated
-- Cleanup: `cmdSynthesize` removes worktrees for `completed` and `plan_complete` workers via `git worktree remove --force` and drops the dispatch branch. Worker records carry `worktreePath` and `branch` so cross-repo cleanup hits the right clone, not just `projectRoot`. Worktrees the registry no longer tracks, killed, crashed, blocked, or TTL-pruned workers plus pre-#463 worktrees, are removed by the `cleanupOrphanWorktrees` sweep. See Worktree Cleanup.
+- Cleanup: `cmdSynthesize` removes worktrees for `completed` and `plan_complete` workers via `git worktree remove --force` and drops the dispatch branch. `cleanupWorktree` refuses to reap any record whose worker pid is still alive and logs `Skipped reap: worker <sid> ... still running; worktree retained` instead (#791 defense-in-depth) — the synthesize-path reaper must never delete a worktree a live worker is still writing into. Worker records carry `worktreePath` and `branch` so cross-repo cleanup hits the right clone, not just `projectRoot`. Worktrees the registry no longer tracks, killed, crashed, blocked, or TTL-pruned workers plus pre-#463 worktrees, are removed by the `cleanupOrphanWorktrees` sweep, whose force-removal stays safe by construction because an orphan reaches it only after its registry entry is gone. See Worktree Cleanup.
 - Worktree names are `dispatch-<sessionId>` where sessionId is 12-char hex from `crypto.randomBytes(6)`. Collision probability is negligible.
 - `.gitignore` must include `.claude/worktrees/` so worktree contents do not appear as untracked files in the main repo
 - Deploy is out of scope for workers. The prompt forbids `vercel`, `netlify`, and any other deploy command. Even if a worker tries, `.vercel/` propagation (when projects opt in) means it lands in the real project, not a junk one. A hard PreToolUse block is tracked in #472.
@@ -334,8 +336,8 @@ The sweep skips two things. The caller's own checkout: if `/dispatch` is ever ru
 
 Streamed by default:
 
-- `[<sid>] done status=<subtype> cost=$<n>` — `result` event, the worker's terminal line.
-- `[<sid>] PR: <url>` — `pr_url` event.
+- `[<label>] done <subtype> — <summary>  PR: <url>  cost=$<n>` — the worker's terminal line, emitted by `lifecycleScan` with the rich label, the worker's one-line result summary (#788), and the worker's self-reported `pr_url` (#792). The summary and PR segments are each dropped when absent. `done` fires only once the worker process has exited, not on the first `result` event seen in the stream. See the Notifications "Worker done" item for the #791 process-exit gate.
+- `[<sid>] PR (seen): <url>` — a PR URL observed in the live stream, advisory only, gated to the worker's own repo. A research worker citing a third-party PR, a Skyvern or Playwright PR for instance, would otherwise surface as if it opened a PR on a stranger's repo (#792). The authoritative "this worker opened a PR" signal is the `PR:` segment on the done line, sourced from the worker's self-reported `pr_url`; the `(seen)` line is an early heads-up the tail cannot prove. The own-repo gate is the pure `prUrlMatchesRepo(url, repo)`. `DISPATCH_VERBOSE=1` surfaces cross-repo URLs too.
 - `[<label>] idle>5m on <tool>` and `[<label>] crashed` — lifecycle lines from `lifecycleScan`.
 
 Suppressed by default:
@@ -350,7 +352,7 @@ Three lifecycle events fire OS desktop notifications via `osascript -e 'display 
 
 ### Events
 
-1. **Worker done.** When the watcher's per-tick lifecycle scan sees a `result` event in a tracked `.jsonl`, it fires once per worker. Done suppresses idle and crashed markers; once a worker has finished, neither follow-up notification fires.
+1. **Worker done.** When the watcher's per-tick lifecycle scan sees a `result` event in a tracked `.jsonl` AND the worker process has exited, it fires once per worker — both the desktop banner and the Monitor stream line — carrying the rich label, the result subtype, the worker's one-line result summary from `parseWorkerResult`, the worker's self-reported `pr_url` (#792), and the cost (#788). The process-exit gate is the #791 fix. A `result` event alone is not proof of completion: in-process subagents and multi-phase workflows emit their own terminal `result` lines mid-run, sharing the parent session_id and reporting cumulative cost. That previously fired a burst of premature "done" notifications and drove `--synthesize` to reap a still-live worker's worktree. `classifyLifecycle` now suppresses done while the pid is known-alive, trusting the result only once the pid is gone or unknown — the same liveness gate the registry's R3 pruning rule uses. Earlier the stream line came from the live tail with only the bare session-id prefix; it now comes from `lifecycleScan` with the full label. Done suppresses idle and crashed markers; once a worker has finished, neither follow-up notification fires.
 2. **Worker idle > 5 min.** The watcher checks each tracked `.jsonl` mtime every 30 seconds. When mtime is older than 300 seconds and the worker has not emitted a `result` event, the watcher prints an `idle>5m on TOOL` line to stdout and notifies. A marker file under the per-watcher tempdir prevents repeat spam. The marker clears on the next tool_use event so re-blocking re-notifies. **Prior-session guard.** If the `.jsonl` is already older than `IDLE_THRESHOLD_SECS` at discovery time, the watcher stamps `<sid>.skip_idle` and never fires this notification for that file. Combined with `pruneActive`, leftover `.jsonl` files from previous sessions stay quiet.
 3. **Worker crashed.** When `active.json`'s recorded PID is no longer alive and no `result` event has been written, the watcher prints a `crashed` line and notifies. Once per worker per watcher invocation. **Prior-session guard.** If the `.jsonl` is already older than `IDLE_THRESHOLD_SECS` at discovery time, the watcher stamps `<sid>.skip_crashed` and suppresses this notification. The primary defense is `pruneActive`, which removes the entry from `active.json` so `worker_pid_for` returns empty and the crashed branch never enters. The marker is belt-and-suspenders.
 
@@ -370,7 +372,7 @@ Three lifecycle events fire OS desktop notifications via `osascript -e 'display 
 `<repo-name>` is the basename of the worker's `repo` field, or the basename of `cwd` when `repo` is null (current-repo dispatch). Title bar reads `Claude Code Dispatch`.
 
 Examples:
-- `claude-kit#445 (fix: Cognee MCP launcher missing required env va...): done success`
+- `claude-kit#445 (fix: Cognee MCP launcher missing required env va...): done success — wrapped the launcher env check, added a regression test  cost=$2.10`
 - `web-next#42 (feat: add login flow): done error_during_execution`
 - `claude-kit#445 (fix: Cognee MCP launcher missing required env va...): idle>5m on Bash`
 - `claude-kit#445 (fix: Cognee MCP launcher missing required env va...): crashed (pid 12345 gone)`
@@ -389,7 +391,7 @@ Set `DISPATCH_NO_NOTIFY=1` in the orchestrator's environment. The watcher's `not
 
 Two alternatives were considered.
 
-- **`PushNotification` tool.** Routes through Remote Control to phone if paired, which would close the "stepped away" gap. Rejected for now because the tool is only callable from inside an assistant session, and the watcher is a shell script. Routing through a short-lived `claude -p haiku` call adds latency and cost, and depends on `PushNotification` working in non-interactive `-p` mode, which is undocumented and requires empirical verification. Tracked as a separate kit issue for follow-up investigation.
+- **`PushNotification` tool.** Routes through Remote Control to phone if paired, which would close the "stepped away" gap. Rejected: investigated under #448 and closed as not-pursued. Phone routing is not wanted, and the empirical finding is parked there — `PushNotification` *does* fire from a short-lived `claude -p haiku` call, but at ~$0.02-0.03 per call and 3-5s latency. The actual need behind the original "ambient overwatch" ask was detailed desktop notifications, addressed in #788.
 - **`terminal-notifier`.** Cleaner attribution because it posts as itself, easy to grant permission to in System Settings. Rejected because it requires a `brew install` and is not on the kit's tooling baseline.
 
 `osascript` ships on every macOS install, requires no auth, no extra processes, and surfaces banners through the standard notification system. The trade-off is desktop-only with no phone routing, and the requirement that the parent app calling osascript has notification permission in System Settings.
@@ -405,6 +407,8 @@ osascript notifications post under the parent app that calls `osascript`, typica
 Notifications still land in Notification Center even when banners are silenced. Verify with the date/time menu at the top-right of the screen.
 
 ## Failure Modes to Watch For
+
+**Worker writes into the parent tree (#793).** A worker can, early in its session before it has oriented, build an absolute path into the parent checkout and write a deliverable there instead of its worktree. The path resolvers are correct — proven in #793 — so this is a worker-orientation misfire, not a path bug. Prevention (#797): the worker prompt's Orientation clause pins every write under the worktree cwd and tells the worker to treat any absolute out-of-tree path it reads as stale and rebase it. A #797 static audit confirmed every dispatch-injected surface (prompt, argv, env) is already clean, so the clause is aimed at the two residual model-facing sources a prompt is the only lever for: a stale absolute path in runtime-read text, and an early-orientation misfire. Backstop: `cmdDispatch` snapshots the parent's `git status --porcelain` baseline at dispatch time (`.claude/dispatch/.parent-baseline.json`), and `--synthesize` surfaces any file that appeared in the parent tree during the run — excluding the orchestrator's own pre-run edits and dispatch's gitignored scratch (`.claude/dispatch/`, `.claude/worktrees/`). Advisory only; it never deletes. The operator moves or quarantines a genuine leak.
 
 **Worker crashes mid-run.** The output file still exists. `--synthesize` parses whatever is there and reports partial status. `active.json` still lists the worker until `--kill` or manual cleanup.
 

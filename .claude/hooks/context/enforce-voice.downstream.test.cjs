@@ -72,6 +72,11 @@ function runHookFromDir(dir, payload) {
   const hookPath = path.join(dir, '.claude/hooks/context/enforce-voice.cjs');
   const env = { ...process.env };
   delete env.NODE_PATH;
+  // Resolution order (voice-context.md) puts CLAUDE_PROJECT_DIR first; an ambient
+  // value from the session running the suite would override the fixture and
+  // suppress the block these tests assert. Strip it so the target-path walk under
+  // `cwd: dir` fires deterministically. (#870)
+  delete env.CLAUDE_PROJECT_DIR;
   const res = spawnSync(process.execPath, [hookPath], {
     input: JSON.stringify(payload),
     cwd: dir,

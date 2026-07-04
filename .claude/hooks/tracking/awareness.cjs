@@ -4,10 +4,12 @@
  * Awareness Hook
  *
  * Event: UserPromptSubmit
- * Purpose: Detect conditions that warrant running /analyze
+ * Purpose: Flag accumulated tool failures in the current session
  *
- * Checks tracking data for accumulated failures.
- * Outputs a gentle reminder when conditions are met.
+ * Checks tracking data for accumulated failures and outputs a gentle
+ * heads-up when the threshold is crossed. This is a session-local signal:
+ * cross-project kit health has its own path (npm run kit-health + the
+ * kit-health-surface hook, #887), so this hook no longer points there.
  */
 
 const fs = require('fs');
@@ -106,8 +108,7 @@ function handleHook(data) {
   if (warnings.length > 0) {
     const message = [
       '[AWARENESS] System check:',
-      ...warnings.map(w => `  - ${w}`),
-      'Consider running /analyze (from the claude-kit repo) to investigate.'
+      ...warnings.map(w => `  - ${w}`)
     ].join('\n');
     console.log(JSON.stringify({
       hookSpecificOutput: {

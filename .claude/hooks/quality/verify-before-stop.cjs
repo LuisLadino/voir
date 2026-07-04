@@ -80,6 +80,13 @@ function getIncompleteSkills(tracking) {
     .filter(result => !result.complete);
 }
 
+// Each keyword-leading pattern is guarded by `(?<!\w)`, a negative lookbehind
+// for a word char, so the keyword cannot be the tail of a larger identifier —
+// `print(` must not match `fingerprint(`, `puts ` must not match `inputs `,
+// `console.log(` must not match `myconsole.log(`. JS `\b` does not help: there
+// is no word boundary inside `fingerprint`, where `print` sits flush against
+// identifier chars. `this.console.log(` / `import pdb; pdb.set_trace()` still
+// match — the char before the keyword (`.`, `;`, space) is not a word char. #838
 function getDebugPatterns(filePath) {
   const ext = path.extname(filePath);
   const base = [
@@ -90,17 +97,17 @@ function getDebugPatterns(filePath) {
 
   switch (ext) {
     case '.js': case '.jsx': case '.ts': case '.tsx': case '.mjs': case '.cjs':
-      return [...base, /console\.log\(/, /console\.debug\(/, /debugger;/];
+      return [...base, /(?<!\w)console\.log\(/, /(?<!\w)console\.debug\(/, /(?<!\w)debugger;/];
     case '.py':
-      return [...base, /breakpoint\(\)/, /pdb\.set_trace\(\)/, /print\((?!.*file=)/];
+      return [...base, /(?<!\w)breakpoint\(\)/, /(?<!\w)pdb\.set_trace\(\)/, /(?<!\w)print\((?!.*file=)/];
     case '.swift':
-      return [...base, /print\(/, /#if\s+DEBUG/];
+      return [...base, /(?<!\w)print\(/, /#if\s+DEBUG/];
     case '.go':
-      return [...base, /fmt\.Print(ln|f)?\(/, /log\.Print(ln|f)?\(/];
+      return [...base, /(?<!\w)fmt\.Print(ln|f)?\(/, /(?<!\w)log\.Print(ln|f)?\(/];
     case '.rs':
-      return [...base, /dbg!\(/, /println!\(/];
+      return [...base, /(?<!\w)dbg!\(/, /(?<!\w)println!\(/];
     case '.rb':
-      return [...base, /binding\.pry/, /byebug/, /puts\s/];
+      return [...base, /(?<!\w)binding\.pry/, /(?<!\w)byebug/, /(?<!\w)puts\s/];
     default:
       return base;
   }
@@ -274,7 +281,9 @@ if (require.main === module) {
     STOPPING_PHRASES,
     getRepoRoot,
     isInsideRepo,
-    isDebugScanExempt
+    isDebugScanExempt,
+    getDebugPatterns,
+    checkForDebugStatements
   };
 }
 

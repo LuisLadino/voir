@@ -1,5 +1,5 @@
 ---
-description: Define product requirements before execution. Creates project-brief, architecture decisions, design system, objective + skill map, and project-specific skill stubs. For complex projects needing upfront planning.
+description: Define product requirements before execution. Creates project-brief, architecture decisions, a design system for UI projects, objective + skill map, and project-specific skill stubs. For complex projects needing upfront planning.
 ---
 
 # /init-project

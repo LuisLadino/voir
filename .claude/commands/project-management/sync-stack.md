@@ -1,5 +1,5 @@
 ---
-description: Wire project together, verify setup, generate project specs. Handles the HOW after /init-project defines the WHAT.
+description: Wire the project together and generate the specs a new dev needs to not break THIS codebase: its architecture, conventions, and load-bearing invariants, captured by interview. Not generic library docs.
 ---
 
 # /sync-stack
@@ -29,9 +29,10 @@ Rank generated output by value:
 
 1. **Project reality (HIGH).** Architecture, conventions, and the load-bearing invariants — the unwritten rules a new dev breaks on day one. Captured by **interview** via `capture-invariants`, not by scanning transitional code. Emitted as specs plus `conformance_rules` for the mechanizable subset.
 2. **Non-obvious cross-tech constraints (MEDIUM).** Gotchas that live in no single library's docs — an Astro+React hydration trap, a Prisma+serverless connection limit. Keep these.
-3. **Generic library patterns (LOW).** The dev already knows React, FastAPI, Tailwind. Do not dump these; defer to the engineering principles and the project's own conventions.
+3. **Version-current deltas, even for "known" libraries (MEDIUM).** The consuming model has a training cutoff; this project runs later and pins specific versions. A library pinned at or after the cutoff — or materially changed since — has APIs, defaults, and deprecations the model does not know and will confidently get wrong. Capture the delta: changed and removed signatures, changed defaults, migration notes. "I know LangChain" is precisely the trap when the pin is a post-cutoff 1.x major.
+4. **Version-timeless library basics (LOW).** Framework fundamentals stable across versions — JSX, route definitions, hook rules, import style. The model knows these regardless of pin date. Do not dump them; defer to the engineering principles and the project's own conventions.
 
-The test for any generated content: **would a competent developer already know this, or discover it by reading the code?** If yes, it does not belong here. Capture what they cannot discover independently — the project's decisions, not the framework's API.
+The test for any generated content: **would a competent developer whose knowledge froze at the model's training cutoff get this wrong for the version this project pins?** Capture it when the answer is yes — because the pin postdates the cutoff (tier 3) or because the authoritative source was never reachable to the model (STEP 5's login-gated path). Skip it when they would get it right from version-timeless knowledge or by reading the code. **"Generic" means version-timeless, not "any library the model recognizes"** — the old "the dev already knows it" test silently assumed the model's knowledge is current, which is the one thing sync-stack exists to correct.
 
 ## What This Does
 
@@ -61,6 +62,9 @@ Generates `.claude/specs/architecture/system-map.yaml` showing:
 - Dependencies and their relationships
 - Config file connections
 - Build pipeline flow
+
+### 5. Documentation Coverage
+Maps whether operating docs cover high-coupling code (runtime, connectors, deploy, schema, CLI), using the `covers:` convention from `.claude/specs/kit/doc-coverage.md`. Distinct from the `documentation/` spec category above, which is docstring conventions. Reports gaps, flags un-annotated docs, and writes a self-updating `doc_coverage:` map into `stack-config.yaml`. Re-running is the periodic audit.
 
 ## STEP 0: Resolve Project Specs Root
 
@@ -280,6 +284,8 @@ For each confirmed technology, research how it actually works — not just the A
 
 Claude's training data goes stale. Technologies update constantly. What you "know" about Astro, Motion, or Tailwind may be outdated. The point of this step is to **learn the current state** before building anything.
 
+The value ranking (Core Principle) must not discard what this step learns. For a library pinned at or after the training cutoff, the current state you just researched **is** the high-value capture — not a generic pattern to skip. Discarding it here reintroduces at write-time exactly the staleness this step exists to fix.
+
 ### Research approach: multiple sources
 
 Use ALL available sources. No single source has complete knowledge.
@@ -309,7 +315,32 @@ Prioritize: official docs, GitHub issues/discussions, well-known dev blogs. Depr
 - Migration/upgrade guides (what changed between versions)
 - Advanced topics pages (SSR, hydration, performance)
 
+**4. Human-pasted source** — for login-gated docs the model cannot reach. Many vendor APIs return 403 or an HTML login page to an unauthenticated fetch, and WebFetch fails on authenticated URLs by design per `claude-code/tools.md`. Tripleseat is the concrete case: its API and webhook knowledge base is login-only. These are often the highest-value integrations, the systems the product acts inside, and the ones the model knows least — not in training, not fetchable. The human has access; the model does not. Treat their paste as a first-class source, not a fallback. See **Login-gated documentation** below.
+
+### Login-gated documentation
+
+When a dep's docs are login-gated, the research path is capture-from-paste, not skip.
+
+**Detect.** A fetch that returns 403, a login or sign-in page, or HTML where docs were expected is *gated*, not *unfindable*. Do not silently produce no spec — that leaves the model re-deriving the API by trial and error every session, the exact churn sync-stack exists to eliminate.
+
+**Prompt to paste.** Ask for the authoritative pages by name, then wait:
+
+```
+I can't reach the [system] API docs — they're login-gated; the fetch returned [403 / a login page].
+Paste the relevant pages (endpoints, auth, webhooks) and I'll capture them into an enforced spec.
+```
+
+**WAIT FOR USER RESPONSE.**
+
+**Capture into an enforced spec.** Register the paste as a spec whose `applies_to` covers the code that uses this system, so it auto-loads at edit time, plus a `reference/` detail set for the long-form pages. A pasted doc that lives only in `reference/` and is wired into no spec never auto-loads and is invisible to enforcement — wiring it in is the point.
+
+**Ground-truth rule: live code wins.** Pasted vendor docs can be stale or wrong. When a pasted doc conflicts with live-verified code behavior, the code is authoritative and the spec records both. Tripleseat published its webhook base as `/api/v1/sites/{site_id}/...` when the live-verified base is `/v1/`; `/api/v1` serves HTML. Note the published-versus-real gap in the spec so the next reader does not re-trip it.
+
+**Track coverage.** When a pasted page references another that never arrived — an Authentication article the overview links to but was not pasted — flag it as a gap and request it. Referenced-but-missing pages are known holes, not silent ones.
+
 ### If all sources fail for a technology
+
+First check *why* they failed. A 403 or login page is a gate, not a dead end — route it to **Login-gated documentation** above and prompt for a paste. Reserve the block below for genuinely unfindable technologies, where even the human has no authoritative source.
 
 ```
 RESEARCH INCOMPLETE
@@ -318,6 +349,7 @@ Could not find sufficient information for [technology]:
 - context7: [result]
 - Web search: [result]
 - Official docs: [result]
+- Human-pasted source: [requested / not applicable]
 
 Options:
 1. Retry with different search terms
@@ -331,7 +363,7 @@ Options:
 
 Don't just look up "how to use [technology]." Research these specific angles:
 
-- **Current version behavior:** What version is in package.json? What changed in recent versions?
+- **Current version behavior (recency check):** What version does package.json pin? Query context7 for *that* version. If the pin is at or after your training cutoff, or you cannot confirm your knowledge is current for it, treat its API as unknown and capture the changed and removed signatures, defaults, and deprecations. A pin you "know" but that postdates the cutoff is the trap the value ranking (Core Principle, tier 3) exists to catch.
 - **Runtime lifecycle:** What happens at build time vs server time vs client time?
 - **Integration with other stack technologies:** How does this technology interact with the other technologies in this project's stack?
 - **Known issues:** What are the common "why isn't this working" problems?
@@ -339,7 +371,7 @@ Don't just look up "how to use [technology]." Research these specific angles:
 
 ### Extract from research (the non-obvious only)
 
-The dev already knows the framework's API. Extract only what they cannot get from official docs or by reading the code — the operational knowledge that lives in GitHub issues and dev blogs, not the API reference.
+The dev already knows the framework's API **for versions at or before the model's training cutoff**. For a pin released at or after the cutoff, that knowledge is stale: changed and removed signatures, changed defaults, and deprecations are high-value, capture them. Otherwise extract only what they cannot get from official docs or by reading the code — the operational knowledge that lives in GitHub issues and dev blogs, not the API reference.
 
 **Runtime behavior and cross-tech gotchas (the high-value extraction):**
 - **Lifecycle:** initialization to interactive (e.g., Astro: SSR renders HTML → CSS applies → scripts load → framework hydrates).
@@ -348,7 +380,7 @@ The dev already knows the framework's API. Extract only what they cannot get fro
 - **Conditional behavior:** when it behaves differently (e.g., `client:visible` uses IntersectionObserver — the element must be in the viewport, not just the DOM).
 - **Version-specific changes:** what changed in the version this project pins.
 
-**Do not extract generic API patterns** — component/function signatures, import style, "how to call X." The dev knows these; the engineering principles and the project's own invariants (STEP 9) govern how code is written here. Library file/folder conventions are likewise derivable by reading the code.
+**Do not extract version-timeless API basics** — import style, "how to call X" where the call is stable across versions. But DO extract signatures, defaults, and options that changed in or after the pinned version: those the model gets confidently wrong. The dev knows the timeless basics; the engineering principles and the project's own invariants (STEP 9) govern how code is written here, and library file/folder conventions are derivable by reading the code. What they cannot supply themselves is the post-cutoff delta.
 
 ## STEP 5b: Cross-Technology Interaction Constraints
 
@@ -572,7 +604,7 @@ Generate all? (yes / customize)
 
 ### 8b: Generate coding specs (non-obvious behavior only)
 
-A coding spec is worth generating **only** when a technology has non-obvious runtime behavior or cross-tech constraints (from STEP 5/5b). If a technology has none — the dev just uses its documented API — **skip it**. Do not generate a spec that restates the framework's API.
+A coding spec is worth generating when a technology has non-obvious runtime behavior, cross-tech constraints (from STEP 5/5b), **or a version-current API delta the model would get wrong** (from STEP 5's recency check). If it has none of these — the dev uses a stable documented API that predates the training cutoff — **skip it**. Do not restate the framework's version-timeless API.
 
 When a spec is warranted, create `[technology]-specs.md` with the non-obvious only:
 
@@ -592,6 +624,10 @@ Source: [official docs URL]
 ### Side Effects
 [What this technology does that the API doesn't reveal — inline styles during SSR, DOM mutations, global state.]
 
+## Version Notes
+
+[Only when the pin is at or after the model's training cutoff, or the API changed materially since. What the model's stale knowledge gets wrong for this version: changed and removed signatures, changed defaults, deprecations, migration notes. Cite the version. Omit this section for version-timeless pins.]
+
 ## Interaction Constraints
 
 [Constraints from combining this technology with others in the stack. From STEP 5b.]
@@ -602,7 +638,7 @@ Source: [official docs URL]
 **Prevent by:** [What to do instead]
 ```
 
-Generic API patterns — component declaration, hook rules, "use proper types" — are out. The dev knows them, and `engineering-principles` plus the project's invariants (STEP 9) govern how code is written here.
+Version-timeless API patterns — component declaration, hook rules, "use proper types" — are out; the dev knows them regardless of pin date. But an API that changed in or after the pinned version is IN — the model's knowledge of it is stale. `engineering-principles` plus the project's invariants (STEP 9) still govern how code is written here.
 
 ### 8c: Generate architecture specs
 
@@ -957,6 +993,63 @@ architecture:
     description: "How project components connect — dependency graph and change impact guide"
 ```
 
+## STEP 10b: Documentation Coverage
+
+The system map (STEP 10) maps how code connects. This step maps whether the project's **operating docs** (runbooks, setup, config reference, deploy, schema, CLI) cover its high-coupling code, and whether existing docs are annotated so the `/commit` doc-coverage guard can see them.
+
+This is **doc coverage** — prose docs documenting code via the `covers:` convention. It is NOT the `documentation/` spec category (STEP 8a), which is docstring/comment conventions. Read `.claude/specs/kit/doc-coverage.md` for the convention; this step consumes it, it does not redefine it.
+
+The step carries three lifecycle stages — Detect, Define, Govern — all driven from one deterministic lib. Do not hand-walk the structure or hand-scan frontmatter; run the lib and present what it returns.
+
+### 10b-a: Run the coverage report
+
+```bash
+node .claude/hooks/lib/doc-coverage-gaps.cjs
+```
+
+The lib infers warranted high-coupling areas from project structure against the guard table — **runtime, connectors, deploy, schema, CLI**, the same areas `/commit` guards — reuses the `doc-coverage.cjs` matcher to see which areas already have a covering doc, lists un-annotated docs, and diffs the result against the doc-map persisted in `stack-config.yaml`. It reports; it never writes a doc.
+
+Add `--json` for the structured object, used in 10b-c to write the persisted block:
+
+```bash
+node .claude/hooks/lib/doc-coverage-gaps.cjs --json
+```
+
+### 10b-b: Present Detect — gaps, un-annotated, covered
+
+Surface what the report returns; recommend, never fabricate. Mirror the detect→report-gap→recommend pattern of STEP 7 and STEP 9. Do not auto-generate a runbook — that violates the "never create empty templates" principle those steps state.
+
+- **Gaps** — a warranted area has code but no doc declaring `covers:` over it. Recommend writing one via `/build`, born-annotated with `covers:` per the Authoring section of `.claude/specs/kit/doc-coverage.md`, or filing a tracked issue. Never auto-create it.
+- **Un-annotated** — docs with no `covers:` frontmatter. The report flags the fact-bearing ones by the `doc-coverage.md` test, does the doc state a command, signature, path, or config value that code can falsify, and counts the intent docs. Recommend `covers:` only for the flagged ones; leave tutorials, ADRs, and roadmaps alone.
+- **Covered** — warranted areas whose `covers:` docs map to existing code, the healthy state. Roll these into the STEP 14 summary.
+
+### 10b-c: Define — write/reconcile the persisted doc-map
+
+The `doc_coverage:` section in `stack-config.yaml` is the persistent, self-updating record of which docs this project should have. It is **inferred from structure each run**, not hand-maintained, so it cannot itself go stale. Write it in STEP 13, the single stack-config writer, using the `docMap` array from the `--json` report — one entry per warranted area, with its covering docs, or `[]` for a gap. Stamp `last_inferred` with today's date.
+
+```yaml
+doc_coverage:
+  last_inferred: "2026-06-20"
+  warranted:
+    - category: runtime
+      covers: ["runtime/**"]
+      signal: "runtime"
+      docs: ["docs/runtime-runbook.md"]   # [] when this area is an open gap
+    - category: schema
+      covers: ["prisma/**"]
+      signal: "prisma"
+      docs: []
+```
+
+### 10b-d: Govern — report drift since last sync
+
+Re-running `/sync-stack` IS the periodic doc-coverage audit; there is no separate `/audit` dimension. The report's governance section diffs the freshly-inferred areas against the persisted doc-map:
+
+- **Newly warranted** — an area that now has code but was not in the persisted map, e.g. a `connectors/` directory was just added. Flag it as a new coverage gap to close.
+- **Now stale** — a persisted area whose code went away. Recommend pruning its entry; the rewrite in STEP 13 drops it automatically once it is no longer warranted.
+
+On the first run there is no prior `doc_coverage:` block, so the report says "initial doc-map" and there is nothing to diff.
+
 ## STEP 11: Generate CI Workflow
 
 **Generate GitHub Actions CI workflow based on detected stack.**
@@ -1193,6 +1286,8 @@ specs:
 
 Only include categories that have specs. Don't add empty categories.
 
+**Also write the `doc_coverage:` section** computed in STEP 10b. Take the `docMap` array from `node .claude/hooks/lib/doc-coverage-gaps.cjs --json`, stamp `last_inferred` with today's date, and emit it as a sibling of `specs:`. This is the single write of the persisted doc-map — STEP 10b only computed it. A full rewrite of the section each run is correct: it is inferred from structure, so dropping a now-stale entry is automatic. Omit the section entirely when no high-coupling areas are warranted.
+
 ## STEP 14: Summary
 
 Show what was created/updated:
@@ -1219,6 +1314,10 @@ Specs generated (project reality first):
 - config/version-control.md, config/testing.md — the project's actual setup (deployment/environment skipped: not configured)
 - coding/nextjs-specs.md — non-obvious runtime only (SSR/hydration); most technologies need no spec and are skipped
 - architecture/system-map.yaml — change-impact rules (if_changed / change_rules)
+
+Documentation coverage (STEP 10b):
+- 2 high-coupling areas covered (runtime, schema); 1 gap: deploy has no covering doc — recommend /build
+- 2 docs flagged for covers: annotation; doc_coverage: map written to stack-config.yaml
 
 CI/CD:
 - .github/workflows/ci.yml (build, lint, test)
@@ -1396,7 +1495,7 @@ Use this for internal project rules NOT covered by library documentation:
 - Business logic rules
 - Any project-specific patterns
 
-**Don't use for:** generic library patterns (React, Prisma, Tailwind) — the dev knows those, and the engineering principles govern code style. The main `/sync-stack` flow captures project reality via the invariant interview (STEP 9).
+**Don't use for:** restating a library's API. Version-timeless basics (React, Prisma, Tailwind) the dev already knows, and version-current deltas for a post-cutoff pin, both belong in the main `/sync-stack` flow (STEP 5/8b) — not a custom spec. `--custom` is for project-specific patterns; the engineering principles govern code style and the invariant interview (STEP 9) captures project reality.
 
 ### Step 1: Spec Type
 

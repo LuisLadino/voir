@@ -34,7 +34,7 @@ Patterns are regex with optional flags. Each entry has a reason printed when blo
 - `mkfs.*`. Filesystem format
 - `dd if=... of=/dev/...`. Direct device write
 
-Heredoc bodies are stripped before pattern checking so embedded examples in commit messages or PR bodies do not trigger false positives.
+Heredoc bodies are stripped before pattern checking, by the shared `stripHeredocs` from `command-position.cjs` in placeholder mode (#769), so embedded examples in commit messages or PR bodies do not trigger false positives.
 
 ## How It Runs
 
@@ -79,7 +79,7 @@ The hook reads the JSON at runtime. No code change is required to add a pattern.
 
 ## Failure Modes
 
-- **False positive on heredoc body.** Pattern matches against text inside a heredoc that is documentation rather than execution. Mitigated by `stripHeredocs()` in `block-dangerous.cjs`. If a pattern still triggers on documented text, refine the regex with negative lookbehinds or restrict the flags. Do not skip the heredoc strip.
+- **False positive on heredoc body.** Pattern matches against text inside a heredoc that is documentation rather than execution. Mitigated by the shared `stripHeredocs()` from `command-position.cjs` in placeholder mode (#769), called from `detectDangerous`. If a pattern still triggers on documented text, refine the regex with negative lookbehinds or restrict the flags. Do not skip the heredoc strip.
 - **Pattern config missing or malformed.** Hook fails open. The session continues unprotected. The fail-open default is deliberate: a broken config should not break the session. Surface via `hook-errors.log`.
 - **Bypass via subshell substitution.** `$(echo rm -rf /)` constructs the command at runtime. The static pattern matcher does not see the result. Documented under `Does NOT cover` and routed to Tier 2.
 

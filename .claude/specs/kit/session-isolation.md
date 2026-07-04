@@ -21,6 +21,8 @@ applies_to:
   - ".claude/hooks/safety/block-dirty-deploy.cjs"
   - ".claude/hooks/safety/concurrent-session-gate.cjs"
   - ".claude/hooks/safety/enforce-skills.cjs"
+  - ".claude/hooks/lifecycle/check-recent-ships.cjs"
+  - ".claude/hooks/context/session-init.cjs"
 category: kit
 related: [dispatch, hooks, tracking-persistence, client-mode]
 ---
@@ -55,6 +57,17 @@ claude -w bugfix-123        # a second, independent session in another terminal
 ```
 
 Both land worktrees under `.claude/worktrees/`, the same parent `/dispatch` uses (`dispatch-<id>/`). That directory is already gitignored, so worktree contents never show as untracked in the primary checkout.
+
+### The post-merge discipline
+
+A workspace maps to one branch and one PR, and it must never outlive its merge. There is exactly one staleness failure and it has one cause: **continuing to work in a workspace after its PR has merged.** That branch is now behind `main` — other workspaces have merged ahead — and every further commit accumulates drift against a moving base. A *fresh* workspace never has this problem: Conductor fetches `origin` and branches each new workspace off the latest `origin/main` at creation, so it is born current even when the local checkout is behind. The drift is therefore self-inflicted by working a workspace past its merge, never by the tooling.
+
+So the rule is one decision at the merge, and there is no third option:
+
+- **Continue** — continue on a *new* branch off freshly-fetched `main`, carrying the same chat forward. The native answer to "keep going without going stale": the conversation context survives, the base is current, the merged work is behind you. Use it for a tight follow-up that benefits from the existing chat.
+- **Archive** — the unit is done. The workspace leaves the active list and is restorable from History with its chat intact. Use it when the next work is a clean break whose context comes from the GitHub issue and `/board <tag>`, not the chat.
+
+Never keep working in a merged workspace. The next unit either takes **Continue** or opens a fresh workspace, both of which start from current `main`. This is what makes parallel work safe: nothing is long-lived enough to drift, so the "behind main, muddy, racing other merges" failure cannot occur. The two continuation modes differ only in what carries context forward — Continue carries the chat; Archive-then-fresh-workspace carries it through the issue, where labels-as-truth re-derives the lane's worklist (`board-coordination.md`). Pick by whether the chat is worth keeping.
 
 ### Carrying gitignored context: `.worktreeinclude`
 
@@ -161,7 +174,7 @@ Layer 5 keeps a deploy worktree current against its own `origin`. This layer kee
 
 Client-mode downstreams are not affected the same way: `.claude/` is gitignored there and reaches worktrees via `.worktreeinclude` / Conductor files-to-copy, not a commit. See `client-mode.md`.
 
-**The propagation model — downstream commits its own sync.** The kit is the source of truth; re-sync regenerates a downstream's copies anytime, so nothing is lost by a downstream lagging until it syncs itself. The supported path is `/kit-sync` run *inside the project's own session*: it resolves the kit source, checks the kit is on a clean current `main` without mutating it, runs `sync-kit.sh` against the current repo, then hands the commit to the normal `/commit` flow. The sync lands on `main` through the gated workflow, where fresh worktrees then read it. The rejected alternative is an upstream push or PR from the kit session into each foreign working tree: committing kit files into a repo from outside its own session is the cross-repo path that gets sloppy and was ruled out (Luis, 2026-06-17).
+**The propagation model — downstream commits its own sync.** The kit is the source of truth; re-sync regenerates a downstream's copies anytime, so nothing is lost by a downstream lagging until it syncs itself. The supported path is `/kit-sync` run *inside the project's own session*: it resolves the kit source, checks the kit is on a clean current `main` without mutating it, runs `sync-kit.sh` against the current repo, then hands the commit to the normal `/commit` flow. The sync lands on `main` through the gated workflow, where fresh worktrees then read it. The rejected alternative is committing kit files into a downstream's *long-lived* working tree from outside its own session: that dirties the foreign checkout cross-repo and was ruled out (Luis, 2026-06-17). The maintainer-side `/kit-fleet` roller (#759) is the sanctioned automation of this same doctrine, not a violation of it: it opens a PR per downstream, but each repo is synced in a *throwaway worktree off its published `origin/<default>`*, committed there, and torn down — the long-lived checkout is never touched, and every change lands as a clean reviewable PR. The ruled-out path was dirtying the foreign tree; producing isolated PRs is not.
 
 **The write-side signal — `sync-kit.sh` reports propagation state.** After writing to each target, `report_propagation_state` reads local git facts (no fetch) and, when the target is a git repo that is dirty in kit-owned paths or behind `origin/main` or just received changes, prints a loud notice that the files are in the working tree only and must be committed in the project's own session. It never auto-commits or refuses — that would fight the source-of-truth model and the accepted "leave downstreams dirty, commit per-project" workflow. It only makes the working-tree-only nature impossible to miss.
 
@@ -200,15 +213,17 @@ To discover files the kit ships that a downstream's manifest predates (added ups
 
 - `.claude/hooks/context/concurrent-session-warning.cjs`. SessionStart observability hook.
 - `.claude/hooks/context/session-marker-cleanup.cjs`. Stop observability hook.
-- `.claude/hooks/safety/block-dirty-deploy.cjs`. PreToolUse Bash gating hook.
+- `.claude/hooks/safety/block-dirty-deploy.cjs`. PreToolUse Bash gating hook. Reuses `deploy-currency.dirtyFiles` for the git-porcelain edge (#724).
 - `.claude/hooks/safety/concurrent-session-gate.cjs`. PreToolUse Bash gating hook. Enforces Layer 2 by reusing `evaluate()` on every git-mutating command. git + gh pr only; deploys are Layer 3.
 - `.claude/hooks/safety/enforce-skills.cjs`. Extended with branch-shift check. Gating.
 - `.claude/hooks/lib/deploy-currency.cjs`. Layer 5 shared core. Pure `classify` plus the `gitFacts`/`fetchDeploy` IO edge. No process exit, no printing.
 - `.claude/scripts/deploy-guard.cjs`. Layer 5 CLI. Fetches, fast-forwards a clean behind tree, refuses anything unsafe, optionally execs the wrapped command. Runner-invoked, not a hook.
 - `.claude/hooks/context/deploy-drift-warning.cjs`. Layer 5 SessionStart observability hook. Local-only drift warning on the deploy branch.
 - `.claude/hooks/context/kit-drift-warning.cjs`. Layer 6 SessionStart observability hook. Local-only drift warning in a downstream whose kit-owned files lag the kit or sit uncommitted. Self-contained pure `evaluate` plus `warningText`; reuses `deploy-currency.dirtyFiles` for the git edge.
+- `.claude/hooks/context/kit-settings-drift-warning.cjs`. Layer 6 settings-side analog (#808). SessionStart warning when the kit's own `~/.claude/settings.json` hooks block drifts from `settings.template.json` — a template hook added but `setup-kit.sh` not re-run, so the kit runs stale registrations. Runs `setup-kit.sh --check` for the verdict; fires only in the kit source repo (settings.template.json + setup-kit.sh present), no-ops in downstreams. Advisory, fail-open.
 - `sync-kit.sh` (`report_propagation_state`). Layer 6 write-side signal. After writing each target, prints a loud working-tree-only notice when the target is a git repo that is dirty in kit paths, behind origin, or just changed. Never commits or refuses.
 - `.claude/commands/project-management/kit-sync.md`. Layer 6 supported path. The downstream-side `/kit-sync` command: resolve the kit source, verify it is clean and current without mutating it, apply it to this repo, hand the commit to `/commit`.
+- `scripts/kit-fleet.cjs` / `/kit-fleet`. Layer 6 maintainer-side automation (#759). Rolls the kit's published `main` across every personal downstream as one clean PR per repo — each synced in a throwaway worktree off its `origin/<default>`, committed there, and torn down, so no long-lived checkout is dirtied. Reuses `sync-kit.sh --list-downstreams` for enumeration and `kit-drift-warning`'s `resolveKitSource`/`readManifest`. Kit-source-only (excluded from sync, like `/analyze`); client repos skipped (gitignored `.claude/`).
 
 Worktree creation itself is native Claude Code (`claude -w`) or Conductor — no kit module owns it for interactive sessions.
 
@@ -216,12 +231,30 @@ Worktree creation itself is native Claude Code (`claude -w`) or Conductor — no
 
 - Native worktrees live at `.claude/worktrees/<name>/` on branch `worktree-<name>`; dispatch worktrees at `.claude/worktrees/dispatch-<id>/`. Both share the `.claude/worktrees/` parent so `.gitignore` excludes the whole tree with one entry.
 - Markers live at `.claude/sessions/<session-id>.json`. Directory is gitignored.
+- State scope must match decision scope: a repo-level or project-level gate reads committed or git-common-dir state, never a gitignored per-worktree marker. Per-worktree markers gate per-worktree facts or pure optimizations only. See State Placement Across Worktrees.
 - Session edit log lives at `~/.claude/projects/{workspace-key}/tracking/{session-id}.jsonl`. The dirty-deploy guard reads it. Does not write.
 - Override env vars are explicit and documented in refusal messages: `CLAUDE_KIT_NO_CONCURRENCY_WARN` for the Layer 2 banner, `ALLOW_CONCURRENT_GIT` for the Layer 2 git gate, `ALLOW_DIRTY_DEPLOY`, and `BRANCH_VERIFIED`. The banner and git-gate overrides are deliberately separate. Silencing the informational banner must not disable the protective block.
 - Layer 5 env vars: `CLAUDE_KIT_DEPLOY_BRANCH` overrides the warning's local deploy branch (default main); `CLAUDE_KIT_DEPLOY_REMOTE_REF` overrides the tracked ref (default origin/<branch>); `CLAUDE_KIT_NO_DEPLOY_DRIFT_WARN` silences the warning. The guard takes these as the `--branch` and `--remote-ref` flags, not env vars, because a runner passes them explicitly.
 - Layer 6 env vars: `CLAUDE_KIT_SOURCE` overrides the kit source location the drift warning and `/kit-sync` compare against (default `~/Repositories/Personal/claude-kit`); `CLAUDE_KIT_NO_KIT_DRIFT_WARN` silences the warning. The kit-drift warning fires only in a downstream (a repo with `.claude/.kit-manifest`), so it never fires in the kit source.
 - `sync-kit.sh` never commits or pushes; it only writes a downstream's working tree and reports propagation state. The commit is always the downstream's own session via `/kit-sync` then `/commit`. The kit is the source of truth and re-sync regenerates downstream copies, so a lagging downstream loses nothing.
 - The deploy checkout is never hand-edited and never a sync target. It is only ever fast-forwarded to its tracked remote ref. The local branch the deploy tree sits on is decoupled from that ref (#726): the primary holds `main`, so the deploy worktree uses its own branch (e.g. `deploy`) tracking `origin/main`, or a separate clone on its own `main`. The guard enforces cleanliness by refusing a dirty or diverged tree; the discipline keeps it from happening.
+
+## State Placement Across Worktrees
+
+A hook reads state to decide behavior. WHERE that state lives decides whether the decision survives a fresh worktree. A gitignored marker under `.claude/` is absent in every new worktree, so a hook that reads its absence as a project-level fact fires a false signal on each one. Repeated false signals train the operator to dismiss the warning, which then masks the real case it exists to catch.
+
+**Rule: state scope must match decision scope.**
+
+- A repo-level or project-level fact reads **committed or repo-shared** state. Committed files survive `git worktree add`. Repo-shared state lives in the git common dir, resolved with `git rev-parse --git-common-dir`, which every worktree of a repo shares.
+- A gitignored per-worktree marker under `.claude/` is correct only for a per-worktree fact or a pure optimization.
+
+**Instances of the bug, fixed:**
+
+- `#812` — session-init read the gitignored `.sync-state.json` to decide "never synced". Gated on the committed `stack-config.yaml` instead.
+- `#796` — a dispatch worker inherited the orchestrator's `CLAUDE_PROJECT_DIR`. Overridden to the worker's own worktree.
+- `#820` — the broken-ship dedup wrote its ack set to per-worktree `.claude/`. Moved to the git common dir so it is shared across worktrees.
+
+**Correct per-worktree uses — do NOT "fix" these:** `.claude/sessions/` markers, because live sessions are per-checkout; `.claude/dispatch/.last-cleanup`, because re-running the cleanup sweep is idempotent. `kit-drift-warning`'s `.kit-manifest` gate is also safe: downstreams commit their manifest, so it survives the worktree.
 
 ## Carrying Context Into Worktrees
 

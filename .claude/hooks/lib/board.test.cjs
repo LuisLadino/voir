@@ -15,9 +15,9 @@ function test(name, fn) {
 }
 
 const WS = [
-  { slug: 'workflow', name: 'Workflow', keywords: ['skill', 'hook', 'dispatch', 'phase'] },
-  { slug: 'context', name: 'Context', keywords: ['context', 'session', 'tracking'] },
-  { slug: 'safety', name: 'Safety', keywords: ['safety', 'block', 'credential'] },
+  { slug: 'workflow', tag: 1, name: 'Workflow', keywords: ['skill', 'hook', 'dispatch', 'phase'] },
+  { slug: 'context', tag: 2, name: 'Context', keywords: ['context', 'session', 'tracking'] },
+  { slug: 'safety', tag: 3, name: 'Safety', keywords: ['safety', 'block', 'credential'] },
 ];
 
 // ── label parsing ──
@@ -77,6 +77,40 @@ test('classifyByHeuristic empty workstreams → null', () => {
   assert.strictEqual(B.classifyByHeuristic('anything', []), null);
 });
 
+// ── lane resolution (#777) ──
+test('resolveLane: numeric tag resolves to slug', () => {
+  assert.strictEqual(B.resolveLane('2', WS), 'context');
+  assert.strictEqual(B.resolveLane(2, WS), 'context');
+});
+
+test('resolveLane: string tag (yaml-mini form) resolves', () => {
+  const ws = [{ slug: 'context', tag: '2', name: 'Context' }];
+  assert.strictEqual(B.resolveLane('2', ws), 'context');
+});
+
+test('resolveLane: exact slug resolves, case-insensitive', () => {
+  assert.strictEqual(B.resolveLane('safety', WS), 'safety');
+  assert.strictEqual(B.resolveLane('SAFETY', WS), 'safety');
+});
+
+test('resolveLane: exact display name resolves, case-insensitive', () => {
+  assert.strictEqual(B.resolveLane('Context', WS), 'context');
+  assert.strictEqual(B.resolveLane('workflow', WS), 'workflow');
+});
+
+test('resolveLane: unknown token returns null (caller shows the menu)', () => {
+  assert.strictEqual(B.resolveLane('operations', WS), null); // the cross-session miss
+  assert.strictEqual(B.resolveLane('99', WS), null);
+  assert.strictEqual(B.resolveLane(null, WS), null);
+  assert.strictEqual(B.resolveLane('   ', WS), null);
+});
+
+test('laneSummary carries the numeric tag onto each lane', () => {
+  const { lanes } = B.laneSummary([issue(1, 'context', 'ready', 'high')], WS);
+  const ctx = lanes.find(l => l.slug === 'context');
+  assert.strictEqual(ctx.tag, 2);
+});
+
 // ── decorate + launchable ──
 test('decorate extracts axes', () => {
   const d = B.decorate({ number: 5, title: 'X', labels: ['workstream/safety', 'status/ready', 'priority/high'] });
@@ -97,6 +131,10 @@ test('isLaunchable: blocked is never launchable', () => {
 });
 test('isLaunchable: in-progress is not launchable', () => {
   assert.strictEqual(B.isLaunchable({ stage: 'in-progress', priority: 'high' }), false);
+});
+test('isLaunchable: deferred is never launchable, even at high priority', () => {
+  assert.strictEqual(B.isLaunchable({ stage: 'deferred', priority: 'high' }), false);
+  assert.strictEqual(B.isLaunchable({ stage: 'deferred', priority: 'low' }), false);
 });
 test('isLaunchable: plain backlog medium is not launchable', () => {
   assert.strictEqual(B.isLaunchable({ stage: 'backlog', priority: 'medium' }), false);
@@ -147,6 +185,19 @@ test('laneSummary keeps a legacy/renamed workstream visible', () => {
   assert.strictEqual(legacy.total, 1);
 });
 
+test('laneSummary counts deferred and keeps it off launchable + lane top', () => {
+  const issues = [
+    issue(1, 'workflow', 'ready', 'high'),
+    issue(2, 'workflow', 'deferred', 'high'),   // deliberate set-aside, high priority
+  ];
+  const { lanes } = B.laneSummary(issues, WS);
+  const wf = lanes.find(l => l.slug === 'workflow');
+  assert.strictEqual(wf.total, 2);
+  assert.strictEqual(wf.launchable, 1);          // only #1
+  assert.strictEqual(wf.deferred, 1);            // #2 broken out
+  assert.strictEqual(wf.top.number, 1);          // deferred never tops the lane
+});
+
 // ── rankLanes / parallelSafe / directive ──
 test('rankLanes orders by launchable then highPriority', () => {
   const lanes = [
@@ -179,6 +230,19 @@ test('buildDirective recommends most-launchable lane + lists parallel-safe + unl
   assert.ok(safeSlugs.includes('workflow') && safeSlugs.includes('context'));
   assert.ok(!safeSlugs.includes('safety')); // only a blocked issue, 0 launchable
   assert.strictEqual(d.unlaned.length, 1);
+});
+
+test('buildDirective drops a deferred-only lane from parallelSafe but keeps it visible', () => {
+  const issues = [
+    issue(1, 'workflow', 'ready', 'high'),
+    issue(2, 'context', 'deferred', 'high'),   // deferred, not a dependency block
+  ];
+  const d = B.buildDirective(issues, WS);
+  const safeSlugs = d.parallelSafe.map(l => l.slug);
+  assert.ok(safeSlugs.includes('workflow'));
+  assert.ok(!safeSlugs.includes('context'));   // 0 launchable → not parallel-safe
+  const ctx = d.lanes.find(l => l.slug === 'context');
+  assert.strictEqual(ctx.deferred, 1);         // still in the breakdown
 });
 
 // ── IO edge (injected) ──

@@ -45,6 +45,14 @@ const {
 } = require('../lib/session-utils.cjs');
 
 const { resolveVoice, registryHasPathRules, resolveProjectRoot } = require('../lib/voice-registry.cjs');
+const { LEAD, stripHeredocs, stripQuotedRegions } = require('../lib/command-position.cjs');
+
+// The VOICE= override is a real shell env-var prefix, honored only at a command
+// position. A bare `\s` prefix would also match `VOICE=none` sitting inside an
+// argument (`echo VOICE=none | pbcopy`), silently skipping the gate. LEAD anchors
+// it the same way the #642 Bash gates do; its optional VAR=val prefixes keep the
+// legitimate `VOICE=none echo x | pbcopy` form working via backtracking. (#752)
+const VOICE_OVERRIDE_RE = new RegExp(LEAD + String.raw`VOICE=(["']?)([^\s"']+)\1`);
 
 // Auto-memory tree under ~/.claude/projects/<workspace>/memory/ is Claude's own
 // internal state. Writes there are never external content. No voice.yaml rule
@@ -91,21 +99,25 @@ function recordBlock(sessionId, hash) {
   } catch {}
 }
 
-// The clipboard channel fires only when pbcopy is a real command sink, not when
-// the literal token `pbcopy` rides inside an argument. A shell pipe can never
-// live inside quotes, so quoted regions are stripped before the test: a grep
-// alternation `'a\|pbcopy'`, an `echo`/`sed` body, or a `gh issue create`
-// --body that merely shows `| pbcopy` as an example no longer trips the gate.
-// Backslash-escaped pipes (`grep a\|pbcopy`, BRE alternation without quotes)
-// are excluded too. Heuristic, not a shell parser; see voice-context.md. (#640)
-function stripQuotedRegions(command) {
-  return command
-    .replace(/'[^']*'/g, '')
-    .replace(/"(?:\\.|[^"\\])*"/g, '');
-}
-
+// A heredoc body is shell data, not a quoted region, so the quote strip leaves
+// it intact and a `| pbcopy` token documented inside the body would trip the
+// sink test (e.g. a `gh pr create` body that shows the gate's own examples).
+// stripHeredocs (preserve-operator) removes the body but keeps the operator
+// line, so a real `cat <<EOF | pbcopy` sink still fires; it runs before the
+// quote strip because a quoted delimiter (`<<'EOF'`) would otherwise be eaten
+// by the quote pass and the body never matched. Both strippers are shared from
+// command-position.cjs (#769); see voice-context.md. The clipboard channel
+// fires only when pbcopy is a real command sink, not when the literal token
+// rides inside a quoted argument. The quote strip runs with
+// preserveSubstitutions so a real sink inside a command substitution inside
+// double quotes — `echo "$(make-draft | pbcopy)"` — survives and still fires;
+// a plain prose `| pbcopy` in quotes has no substitution, so it is blanked and
+// passes. Heuristic, not a shell parser. (#640, #754, #851)
 function detectsPbcopySink(command) {
-  const unquoted = stripQuotedRegions(command);
+  const unquoted = stripQuotedRegions(
+    stripHeredocs(command, { mode: 'preserve-operator' }),
+    { preserveSubstitutions: true }
+  );
   // Real pipe into pbcopy: a `|` that is not the second bar of `||` and not a
   // backslash-escaped `\|`.
   if (/(?:^|[^|\\])\|\s*pbcopy\b/.test(unquoted)) return true;
@@ -124,7 +136,7 @@ function handleBash(data) {
   // content-file redirect channel was removed in #743 (see header).
   if (!detectsPbcopySink(command)) process.exit(0);
 
-  const envMatch = command.match(/(?:^|\s)VOICE=(["']?)([^\s"']+)\1/);
+  const envMatch = command.match(VOICE_OVERRIDE_RE);
   const envVar = envMatch ? envMatch[2] : null;
 
   // pbcopy is an act of the current session, so voice resolves against cwd:

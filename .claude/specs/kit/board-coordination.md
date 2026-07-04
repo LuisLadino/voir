@@ -29,7 +29,7 @@ A solo operator running parallel agents through Conductor workspaces and dispatc
 The lane lives as a label on the issue, not in the Projects board.
 
 - `workstream/<slug>` is the lane, the file-overlap proxy.
-- `status/<stage>` is the workflow stage: `backlog`, `ready`, `in-progress`, `blocked`. A closed issue is Done by being closed, so there is no `status/done`.
+- `status/<stage>` is the workflow stage: `backlog`, `ready`, `in-progress`, `blocked`, `deferred`. A closed issue is Done by being closed, so there is no `status/done`.
 - `priority/<level>` is `high`, `medium`, or `low`.
 
 The GitHub Projects v2 board is a derived visual mirror of those labels. This is deliberate. The kit's own principle is that GitHub issues are the system of record. A board-as-store would be a second store to reconcile, which is why hand-rolled boards rot, and why GitHub's built-in closed→Done silently drifts: that workflow only touches the built-in `Status` field, never a custom one. With labels as truth:
@@ -66,6 +66,17 @@ The lane set is project-specific and lives in `.claude/board.yaml`. The kit ship
 - **Chokepoint exceptions serialize even across lanes.** Some files are touched by many lanes, for example `settings.template.json`, `.claude/.kit-manifest`, `package.json`, or a hot runtime file. Two issues that both touch a chokepoint collide regardless of lane. Chokepoints are listed in `board.yaml` under `chokepoints:` and surfaced as prose by `/board`. They cannot be computed from labels.
 
 Workstream is a proxy for file-overlap, not a guarantee. Precise file-claim detection is a separate, harder capability that is out of scope here.
+
+## Deferred vs Blocked
+
+Both `blocked` and `deferred` take an issue off the launchable surface, but they mean different things and must not be conflated.
+
+- **`blocked`** — waiting on a named dependency. The issue *would* be worked now if the dependency cleared. The wait is external to the operator's choice: another issue, an upstream decision, an unavailable resource.
+- **`deferred`** — a deliberate operator set-aside. Nothing is blocking it; the operator chose "not now." Defer-by-choice is a normal action: an issue that is real and unblocked but not what the operator wants any workspace to pick up yet.
+
+Both are excluded from `launchable` and `parallelSafe`. The distinction is load-bearing: `blocked`'s count answers "what is waiting on a dependency," and polluting it with deliberate set-asides degrades that signal. Before `deferred` existed, the only levers to take an unblocked issue off the recommendation surface were misusing `status/blocked`, demoting `priority` (which corrupts the priority axis — a low-priority issue is still a launchable candidate when `status/ready`), or closing the issue. `deferred` is the clean lever.
+
+`deferred` is excluded **unconditionally** — even a `priority/high` deferred issue is not launchable. That is the point: priority no longer re-surfaces it. To bring a deferred issue back, the operator un-defers it by setting its stage back to `ready` or `backlog`. Deferred issues stay visible in the per-lane breakdown (the lane's `deferred` count) and in the board's Deferred column; they leave the *recommendation*, not the board.
 
 ## The Operating Model: One Workspace Per Lane
 
@@ -119,9 +130,11 @@ fields:                   # provisioned single-select ids + option maps,
   priority:   { id: PVTSSF_zzz, options: { High: "opt", Medium: "opt", Low: "opt" } }
 workstreams:              # the lanes, derived from CLAUDE.md skill-map
   - slug: workflow
+    tag: 1                 # the concise address the operator types: /board 1
     name: "Workflow"
     keywords: [skill, hook, dispatch, phase, verify, workflow]
   - slug: context
+    tag: 6
     name: "Context & observability"
     keywords: [context, session, tracking, lens, observability]
 chokepoints:              # files many lanes touch, serialize even cross-lane
@@ -131,6 +144,8 @@ chokepoints:              # files many lanes touch, serialize even cross-lane
 ```
 
 `workstreams[].keywords` drives the deterministic classifier. `fields` is read only by `/board` for the visual mirror; the lib and hooks ignore it and stay label-only.
+
+`workstreams[].tag` is the lane's concise numeric address — what the operator types to drive a lane (`/board 4`), identical in form across every project so the muscle memory transfers. `board.cjs lane <token>` resolves a numeric tag, an exact slug, or an exact display name to the lane's slug; an unknown token returns the available lanes so the command shows a menu instead of failing silently. The tag is explicit and stable in `board.yaml`, never positional — reordering lanes can't silently mispoint a tag. The descriptive `name` stays as the board-column label; the tag is only the address.
 
 ## Module Boundaries
 
