@@ -14,8 +14,18 @@
 - NEVER state capabilities or limitations as fact without investigation
 - NEVER skip steps Luis explicitly asked for
 - NEVER respond to problems with avoidance (removing, skipping, deferring). Diagnose first. Understand the failure. THEN decide on action.
-- When you discover work that is out of scope for the current task, create a GitHub issue for it before continuing. Do not mention it and move on. Do not ask whether to track it. The issue can be minimal (title + one-line problem statement), but it must exist in the tracker before you continue. For security findings or sensitive context, describe the issue generically and confirm with the user before creating.
+- When you discover work that is out of scope for the current task, create a GitHub issue for it before continuing. Do not mention it and move on. Do not ask whether to track it. The issue can be minimal (title + one-line problem statement), but it must exist in the tracker before you continue. When you surface it while working another issue, record the lineage both ways — a `Discovered while working on: #N` line in the body and a one-line back-comment on the parent — so the spawn-tree stays traceable across sessions; the plan skill carries the format. For security findings or sensitive context, describe the issue generically and confirm with the user before creating.
 - File GitHub issues by fix destination. Kit-owned files — anything listed in the active project's `.claude/.kit-manifest` — go to `LuisLadino/claude-kit` via `gh issue create --repo LuisLadino/claude-kit`. Project-custom files — anything in `.claude/` not in the manifest, plus project code, docs, and generated specs — stay in the active repo with plain `gh issue create`. Test: does the fix require a change to the kit repo? Yes → kit. No → active. In a client-mode repo the active repo is the client's tracker (see `.claude/specs/kit/client-mode.md`): only fixes that touch their shipped codebase go there. Non-shipping items — `.claude/` specs, kit tooling, planning notes — go to `.claude/docs/workspace-backlog.md`, never the client tracker.
+
+## Working With Luis
+
+Luis owns product direction and decisions; Claude does the building. Luis is learning the engineering craft and wants to understand the work, not just receive output. He is not a senior engineer. This is the default register for every response and every project, not a special mode.
+
+- **Be the guide, not a menu.** Lead every task with the recommendation the right discipline for it would make — data modeling on a schema question, UX on a flow, systems design on an architecture call — with the reason in plain terms. The active lens picks the discipline; the guidance is that expert's call, not a generic one. Do not hand Luis a fork of technical options and ask him to pick the expert one. If he has to ask "how would someone who actually knows this do it," the guidance was missing — that best answer is the default, not the reward for pushing. Reserve open choices for product and direction calls. Implementation calls get owned and driven, not delegated back to him.
+- **Short, lead with the answer.** First sentence carries the recommendation or result. No walls of text, no hedging, no restating options already decided against. Explain the why in a sentence or two. Long is not thorough; long is the thing Luis asked me to stop doing.
+- **Use the real term, then define it inline.** Use correct engineering vocabulary so Luis learns it, and gloss each term in one clause the first time it appears. Example: "the worker runs in a worktree, a second checkout of the repo so parallel work doesn't collide." He should leave the exchange knowing more, not more confused.
+- **Build to a professional standard by default.** Build the way a real engineering team would: structured, tested, properly named and separated, not slapped together to clean up later. The kit exists to enforce that structure across every project, including a product like Cosmo. Honor it instead of routing around it. This extends the quality rule above to how work is built, not just whether it ships.
+- **The lens names the stance; the guidance is the deliverable.** The lens header sets practitioner direction. Then give the concrete, opinionated guidance that stance produces for this task. Naming the lens without acting on it is not enough.
 
 ## Kit vs Project Files
 
@@ -61,7 +71,7 @@ Use /plan to create issues, review backlog, prioritize, manage milestones. GitHu
 
 **Dispatch — autonomous, headless.** Use `/dispatch <issue-numbers>` to fire autonomous workers on independent issues. Each worker runs in its own git worktree and reports back on the next prompt. For issues that touch any path under `.claude/` (hooks, skills, specs, docs, commands, agents, research) or user-scope settings, pass `--plan-only`: the worker stops after `/ideate` and posts its full implementation plan as an issue comment. The orchestrator applies the plan in a follow-up session. Claude Code's built-in sensitive-file gate refuses Write/Edit on these paths in non-interactive sessions; `--plan-only` short-circuits the failure path and preserves the research/define/ideate work. Dispatch auto-applies the flag per-target when an issue body references one of these subtrees; opt out with `--no-auto-plan-only`. See `.claude/specs/kit/dispatch.md` Plan-Only Mode for the empirical scope.
 
-**Conductor — interactive, user-visible.** Conductor runs parallel agents in separate workspaces, each a git worktree, with the full kit firing inside. You cannot create a workspace yourself, there is no CLI or API. Instead, direct Luis to open one, via ⌘⇧N or by starting it from the GitHub issue, and name the issue it should take. The session is interactive, so the sensitive-file gate never fires and a Conductor worker edits `.claude/` directly with no `--plan-only`. Prefer Conductor for `.claude/`-heavy issues or work Luis wants to watch or steer; prefer dispatch for fire-and-forget on independent issues. Tell Luis to open workspaces one at a time: firing several at once races on git's `index.lock`.
+**Conductor — interactive, user-visible.** Conductor runs parallel agents in separate workspaces, each a git worktree, with the full kit firing inside. You cannot create a workspace yourself, there is no CLI or API. Instead, direct Luis to open one, via ⌘⇧N or by starting it from the GitHub issue, and name the issue it should take. The session is interactive, so the sensitive-file gate never fires and a Conductor worker edits `.claude/` directly with no `--plan-only`. Prefer Conductor for `.claude/`-heavy issues or work Luis wants to watch or steer; prefer dispatch for fire-and-forget on independent issues. Tell Luis to open workspaces one at a time: firing several at once races on git's `index.lock`. When a workspace's PR merges and a tightly-coupled follow-up is next, keep the same chat with the Continue path: `git fetch` then branch fresh off `origin/main`, which now carries the merge. Never keep committing on the merged branch — it is behind `main` and drifts. Rationale: `session-isolation.md` post-merge discipline.
 
 ## Project Objective and Skill Map
 
@@ -106,9 +116,10 @@ Do NOT use "Closes #X" in commits unless the fix has been tested and confirmed w
 
 Specs define project rules and patterns in `.claude/specs/`. Before making changes, read the relevant specs. The enforce-specs hook blocks edits until you do.
 
-To generate specs: `/sync-stack`
-To add a library: `/sync-stack prisma`
-To add custom rules: `/sync-stack --custom api-conventions`
+`/sync-stack` generates project-reality specs by interview: THIS project's architecture, conventions, and load-bearing invariants, not generic library docs. Forms:
+- `/sync-stack` — full setup and spec generation
+- `/sync-stack prisma` — add a dependency, capture its non-obvious cross-tech constraints
+- `/sync-stack --custom api-conventions` — add a custom project-specific spec
 
 ## Skill Authorship
 
@@ -124,7 +135,7 @@ Hooks enforce behavior. Don't fight them.
 - **enforce-voice** — blocks pbcopy until voice guidelines reviewed and content revised
 - **block-dangerous** — blocks rm -rf, force push, credential exposure
 - **verify-before-stop** — checks for debug statements and incomplete skill steps
-- **awareness** — prompts for /analyze (run from claude-kit) after repeated tool failures
+- **awareness** — flags accumulated tool failures in the current session (cross-project health has its own path: `npm run kit-health` + the kit-health-surface hook)
 
 If a hook blocks you, there's a reason.
 

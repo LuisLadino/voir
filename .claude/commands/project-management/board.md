@@ -1,5 +1,5 @@
 ---
-description: Provision and operate the project's parallel-agent board. Bare /board recommends which lane to open next; /board provision sets it up; /board sync reconciles; /board <lane> drives a lane.
+description: Provision and operate the project's parallel-agent board. Bare /board recommends which lane to open next; /board provision sets it up; /board sync reconciles; /board <n> drives a lane by its numeric tag (slug or name also resolve).
 ---
 
 # Board
@@ -13,7 +13,7 @@ You own every GitHub Projects-API call here. The hooks never touch the Projects 
 - No argument → **Directive** (the default, recommendation-first).
 - `provision` → **Provision** (first-time setup).
 - `sync` → **Sync** (reconcile labels into the board, report lane-less issues).
-- A workstream slug, e.g. `workflow` → **Drive a lane**.
+- A lane tag — number, slug, or name, e.g. `4`, `memory`, or `Personal continuity` → **Drive a lane**. The number is the concise cross-project form the operator types; `board.cjs lane <token>` resolves all three.
 
 If `.claude/board.yaml` is absent and the mode is anything but `provision`, stop and tell the operator to run `/board provision` first.
 
@@ -30,14 +30,15 @@ This emits JSON: `recommended` (the lane to open), `parallelSafe` (lanes safe to
 Narrate it like this, leading with the call:
 
 ```
-Open a workspace for **<recommended.name>** — <launchable> launchable, top is #<n> (<title>, <priority>).
-Safe to run alongside: <other parallel-safe lane names>.
+Open a workspace for **<recommended.name>** (lane <recommended.tag>) — <launchable> launchable, top is #<n> (<title>, <priority>).
+Safe to run alongside: <other parallel-safe lanes, each as "<tag> <name>">.
 Hold: <lanes whose top issue is blocked, with the blocker>.
+Deferred (set aside, not recommended): <sum of lane.deferred across lanes — omit this line when zero>.
 ```
 
-Then, only if useful, the per-lane breakdown (lane, launchable, blocked, top issue) and the lane-less count. Cross-reference `board.yaml` `chokepoints:` — if two recommended-parallel lanes both have a top issue likely to touch a chokepoint, say so and suggest serializing those two.
+Always surface each lane's numeric `tag` next to its name so the operator learns the concise address. Then, only if useful, the per-lane breakdown (tag, lane, launchable, blocked, deferred, top issue) and the lane-less count. Cross-reference `board.yaml` `chokepoints:` — if two recommended-parallel lanes both have a top issue likely to touch a chokepoint, say so and suggest serializing those two.
 
-The operator's next move is to open a Conductor workspace (⌘⇧N) and tell you the lane. You drive it. You recommend; they act and may override.
+The operator's next move is to open a fresh Conductor workspace and drive the lane with `/board <tag>`. You recommend; they act and may override.
 
 ## Provision
 
@@ -52,6 +53,7 @@ gh label create "workstream/<slug>" --description "<name>" --color 1D76DB --forc
 # ensure stage + priority labels exist (skip any that already do):
 gh label create "status/ready" --color 0052CC --force
 gh label create "status/blocked" --color D93F0B --force
+gh label create "status/deferred" --description "Deliberately set aside (not a dependency block)" --color CCCCCC --force
 gh label create "priority/high" --color B60205 --force
 ```
 
@@ -68,7 +70,7 @@ gh project create --owner "@me" --title "<Project name>" --format json
 gh project field-create <num> --owner "@me" --name "Workstream" --data-type SINGLE_SELECT \
   --single-select-options "<Name1>,<Name2>,..."
 gh project field-create <num> --owner "@me" --name "Stage" --data-type SINGLE_SELECT \
-  --single-select-options "Backlog,Ready,In Progress,Blocked,Done"
+  --single-select-options "Backlog,Ready,In Progress,Blocked,Deferred,Done"
 gh project field-create <num> --owner "@me" --name "Priority" --data-type SINGLE_SELECT \
   --single-select-options "High,Medium,Low"
 gh project field-list <num> --owner "@me" --format json   # → field ids + option ids
@@ -112,13 +114,15 @@ For each lane-less issue, lane it (heuristic suggestion, else your judgment) wit
 
 ## Drive a lane
 
-When the operator says to take a lane, load its worklist.
+When the operator names a lane — typically the numeric tag, e.g. `/board 4` — load its worklist.
 
 ```bash
-node .claude/hooks/lib/board.cjs lane <slug>
+node .claude/hooks/lib/board.cjs lane <token>   # token = number (tag), slug, or display name
 ```
 
-This emits the lane's issues already ordered (launchable first, then priority, then number). Narrate:
+`lane` resolves the token to a slug: the numeric `tag` from `board.yaml` (the concise form), the exact slug, or the exact display name. If the token matches nothing, the output is `{ slug: null, error: "unknown lane", available: [...] }` — show the operator the `available` lanes with their tags and ask which, rather than guessing. This is the resolution that makes `/board 4` work the same in every project and stops an approximate lane name from silently failing.
+
+On a match it emits the lane's issues already ordered (launchable first, then priority, then number). Narrate:
 - **Work first:** the top launchable issue. Hand it to the workflow — start `/research` on it.
 - **Dispatchable now:** any other issues in this lane you can see are file-disjoint from the top one. Same-lane issues usually share files, so default to serial; only dispatch the genuinely independent ones.
 - **Blocked:** what is waiting and on what.

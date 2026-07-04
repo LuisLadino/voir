@@ -35,8 +35,23 @@ function findSpecFiles(dir) {
   return files;
 }
 
+// A real glob never needs more than one or two `**`. Beyond this a pattern is
+// pathological, and we fail safe rather than build a catastrophically
+// backtracking regex (ReDoS, #805).
+const MAX_GLOBSTARS = 6;
+
 function matchGlob(filePath, pattern) {
-  let regexStr = pattern
+  // Collapse consecutive globstar runs before translating: `**/**/` matches the
+  // same set as `**/`, but a run becomes nested `(.*/)?...(.*/)?` quantifiers
+  // that backtrack catastrophically against a non-matching path. Then cap the
+  // total `**` count and fail safe above it — the synchronous regex can't be
+  // timed out, so prevention is the only guard (#805).
+  const glob = pattern.replace(/(?:\*\*\/)+/g, '**/').replace(/\*{3,}/g, '**');
+  if ((glob.match(/\*\*/g) || []).length > MAX_GLOBSTARS) {
+    try { process.stderr.write(`[spec-discovery] glob rejected (>${MAX_GLOBSTARS} '**'): ${pattern}\n`); } catch {}
+    return false;
+  }
+  let regexStr = glob
     .replace(/[.+^${}()|[\]\\]/g, '\\$&')
     .replace(/\*\*\//g, '{{DOUBLESTARSLASH}}')
     .replace(/\*\*/g, '{{DOUBLESTAR}}')
@@ -44,7 +59,7 @@ function matchGlob(filePath, pattern) {
     .replace(/\?/g, '.')
     .replace(/{{DOUBLESTARSLASH}}/g, '(.*/)?')
     .replace(/{{DOUBLESTAR}}/g, '.*');
-  if (!pattern.includes('/')) {
+  if (!glob.includes('/')) {
     regexStr = '(.*/)?'+ regexStr;
   }
   const re = new RegExp('^' + regexStr + '$');

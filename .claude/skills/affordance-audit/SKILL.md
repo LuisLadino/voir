@@ -1,7 +1,7 @@
 ---
 name: affordance-audit
 description: >
-  Audit every interactive element, UI or CLI, with Norman's three: what it affords, how the user knows, how they know it fired. Trigger on "is this clear", "look clickable", "wire this up", "add a hook", "ui is ready". Forces cold per-element audit.
+  Audit every interactive element, any surface, with Norman's three: what it affords, how the user knows, how they know it fired. Trigger on "is this clear", "look clickable", "wire this up", "add a hook", "ui is ready". Forces cold per-element audit.
 ---
 
 # Affordance Audit

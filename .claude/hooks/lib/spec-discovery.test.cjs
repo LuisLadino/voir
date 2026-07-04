@@ -43,6 +43,28 @@ test('worktree-prefixed paths resolve via .claude root rewrite', () => {
   assert.strictEqual(matchGlob(fp, '.claude/hooks/**/*.cjs'), true);
 });
 
+test('collapsing consecutive globstars preserves semantics', () => {
+  assert.strictEqual(matchGlob('a/b/c.md', '**/**/*.md'), true);
+  assert.strictEqual(matchGlob('a/b/c.md', '**/*.md'), true);
+  assert.strictEqual(matchGlob('c.md', '**/**/*.md'), true);
+  assert.strictEqual(matchGlob('a/b/c.css', '**/**/*.md'), false);
+});
+
+test('pathological globstar run resolves fast (ReDoS guard #805)', () => {
+  const evil = '**/'.repeat(40) + 'x';
+  const target = 'a/b/c/d/e/f/g/h/i/j/k/l/m/n/o/p';
+  const start = Date.now();
+  const result = matchGlob(target, evil);
+  const ms = Date.now() - start;
+  assert.strictEqual(result, false);
+  assert.ok(ms < 500, `matchGlob took ${ms}ms — collapse should make it near-instant`);
+});
+
+test('excessive non-consecutive globstars fail safe (no match, no hang)', () => {
+  const tooMany = 'a/**/b/**/c/**/d/**/e/**/f/**/g/**/h.md'; // 7 globstars > MAX_GLOBSTARS
+  assert.strictEqual(matchGlob('a/x/b/y/c/z/d/w/e/v/f/u/g/t/h.md', tooMany), false);
+});
+
 console.log('\nspec-discovery: findSpecFiles');
 
 test('walks nested directories', () => {

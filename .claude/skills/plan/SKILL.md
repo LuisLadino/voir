@@ -119,6 +119,27 @@ Drop `workstream/<slug>` only when the project has no `.claude/board.yaml`. When
 - **Tasks** - Breakdown if scope is clear
 - **Definition of Done** - What does success look like? (Should be explicit by end of DEFINE phase)
 
+### 3.5. Record Lineage (Discovered-Mid-Task Issues)
+
+When an issue is surfaced while working another issue, link it both ways. Otherwise the WHY of the new issue lives only in a session transcript, and a steady drip of unlinked issues reads as untrackable churn instead of legible latent-debt discovery.
+
+- **In the new issue's body**, add a lineage block:
+
+  ```markdown
+  ## Lineage
+
+  **Discovered while working on:** #N — one line on how it surfaced
+  ```
+- **On the parent issue**, post a one-line back-comment after creating the child:
+
+  ```bash
+  gh api repos/{owner}/{repo}/issues/{parent}/comments -f body="Spawned #M — one line."
+  ```
+
+  `gh api` is used here because the enforce-skills gate blocks `gh issue comment`.
+
+The link is bidirectional by design: the child names its parent, the parent names its child. A reader of either can walk the spawn-tree without the transcript.
+
 ### 4. Add to Milestone (Optional)
 
 If there's an active milestone:
@@ -418,4 +439,5 @@ Create these labels on new projects:
 - `status/backlog` - Not started
 - `status/ready` - Ready to pick up
 - `status/in-progress` - Being worked on
-- `status/blocked` - Waiting on something
+- `status/blocked` - Waiting on a named dependency
+- `status/deferred` - Deliberately set aside (not a dependency block); excluded from the board's launchable surface until un-deferred

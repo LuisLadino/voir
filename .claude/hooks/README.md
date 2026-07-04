@@ -33,7 +33,6 @@ hooks/
 │   ├── enforce-specs.cjs     # DENY edits until required spec is read
 │   └── spawn-context-agent.cjs   # Spawn context agent at session start
 ├── lifecycle/           # Project lifecycle management
-│   └── spawn-phase-evaluator.cjs  # Spawn phase evaluator after commits
 └── lib/                 # Shared utilities
     └── session-utils.cjs     # Session ID, tracking, project path helpers
 ```
@@ -185,12 +184,6 @@ If found, blocks stopping and asks Claude to clean up.
 #### spawn-context-agent.cjs
 **Event:** SessionStart
 **Purpose:** Injects instruction to spawn context-agent for background project evaluation
-
-### Lifecycle Hooks
-
-#### spawn-phase-evaluator.cjs
-**Event:** UserPromptSubmit
-**Purpose:** Detects new commits and spawns phase-evaluator agent for project health evaluation
 
 ## Registration drift check
 

@@ -5,10 +5,17 @@
 // the durable cross-project layer. The /dream skill runs this so the two stay
 // in sync.
 //
-// Full-replace, not incremental: cognee exposes no cheap per-item update keyed
-// to a memory file, so a changed memory dir is re-ingested as one document and
-// the old dataset content is dropped first. The content hash gates that work —
-// an unchanged memory dir skips the rebuild entirely.
+// Full-replace, not incremental — a deliberate ROI choice, NOT a cognee
+// limitation. #663 validated that cognee's per-item delete IS reliable:
+// delete(data_id, mode="hard") removes a document's chunk, its data item, and
+// its degree-one entity nodes cleanly (no orphans), while shared entities that
+// remain referenced survive. Data items are named `text_<md5(content)>`, so a
+// memory file maps to its data item by content hash — a per-file incremental
+// sync (dirty-set → delete removed files, remember changed files) is feasible.
+// It is not implemented because post-#662 (volatile files excluded) the ROI is
+// modest and the full-replace is simpler and lower-risk on a live cross-project
+// graph. Revisit if durable-memory churn or corpus size grows. The content hash
+// gates the rebuild — an unchanged memory dir skips it entirely.
 //
 // Volatile files are excluded from the payload and the hash: the rolling
 // handoff (project_handoff.md) and the dated context-eval snapshots (eval_*.md)

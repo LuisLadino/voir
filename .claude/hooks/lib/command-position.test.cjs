@@ -67,6 +67,34 @@ test('non-string command returns false', () => {
   assert.strictEqual(atCommandPosition(42, COMMIT), false);
 });
 
+test('#764 does NOT match a phrase documented inside a heredoc body', () => {
+  for (const c of [
+    'gh pr create --body "$(cat <<EOF\ngit commit -m fix\nEOF\n)"',
+    'cat <<EOF\nrun git commit to save\nEOF',
+    'cat <<-EOF\n\tgit commit\n\tEOF',
+  ]) assert.strictEqual(atCommandPosition(c, COMMIT, 'i'), false, c);
+});
+
+test('#764 does NOT match a phrase after a separator inside quotes', () => {
+  for (const c of [
+    'echo "; git commit"',
+    "echo 'step 1; git commit later'",
+    'echo "a | git commit"',
+  ]) assert.strictEqual(atCommandPosition(c, COMMIT, 'i'), false, c);
+});
+
+test('#764 STILL matches a real command substitution inside double quotes (no false-negative)', () => {
+  for (const c of [
+    'out="$(git commit -m x)"',
+    'x="$(setup | git commit)"',
+    'y="`git commit`"',
+  ]) assert.strictEqual(atCommandPosition(c, COMMIT, 'i'), true, c);
+});
+
+test('#764 STILL matches a real command after a heredoc operator line', () => {
+  assert.strictEqual(atCommandPosition('cat <<EOF | git commit\nbody\nEOF', COMMIT, 'i'), true);
+});
+
 test('LEAD is exported as a string', () => {
   assert.strictEqual(typeof LEAD, 'string');
 });

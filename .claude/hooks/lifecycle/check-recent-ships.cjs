@@ -166,6 +166,21 @@ function writeAcknowledged(numbers, ackFile = ACK_FILE) {
   }
 }
 
+// "Which broken ships have I already acknowledged" is a repo-level fact, but
+// ACK_FILE is per-checkout and gitignored, so a fresh worktree starts with an
+// empty ack set and re-fires the alert for the same PRs (the #812 transient-
+// state-as-gate class). git's common dir is shared by every worktree of the
+// repo, so the dedup lives there and survives worktree creation. Falls back to
+// the per-checkout path when git is unavailable — worst case is the pre-existing
+// repeated notification.
+function resolveAckFile(run = defaultRun) {
+  const commonDir = run('git rev-parse --git-common-dir');
+  if (commonDir) {
+    return path.join(path.resolve(commonDir), 'claude-last-acknowledged-broken-ships');
+  }
+  return ACK_FILE;
+}
+
 // ─────────────────────────── Hook entry points ─────────────────────────────
 
 function checkBrokenRecent({ run = defaultRun, now = Date.now } = {}) {
@@ -249,7 +264,12 @@ function handleHook(_input, deps = {}) {
   const inRepo = run('git rev-parse --is-inside-work-tree');
   if (inRepo !== 'true') return process.exit(0);
 
-  reportBroken(checkBrokenRecent({ run }), deps);
+  const ackFile = deps.ackFile || resolveAckFile(run);
+  reportBroken(checkBrokenRecent({ run }), {
+    read: deps.read || (() => readAcknowledged(ackFile)),
+    write: deps.write || ((nums) => writeAcknowledged(nums, ackFile)),
+    log: deps.log,
+  });
 
   const stranded = findStrandedBehind({ run });
   if (stranded.length > 0) {
@@ -270,6 +290,9 @@ if (require.main === module) {
     healStrandedBehind,
     reportBroken,
     reportStranded,
+    resolveAckFile,
+    readAcknowledged,
+    writeAcknowledged,
     // pure decision logic for testing:
     isBrokenRecent,
     selectBroken,
@@ -281,5 +304,6 @@ if (require.main === module) {
     // constants for tests:
     BROKEN_RECENT_WINDOW_MS,
     MAX_HEALS_PER_SESSION,
+    ACK_FILE,
   };
 }

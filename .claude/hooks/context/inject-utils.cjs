@@ -10,59 +10,8 @@ const fs = require('fs');
 const path = require('path');
 
 const HOME = process.env.HOME || process.env.USERPROFILE;
-const PHASE_EVAL_PATH = '.claude/phase-evaluation.json';
 
 const sessionUtils = require('../lib/session-utils.cjs');
-
-/**
- * Load phase evaluation from last commit
- *
- * Instead of consuming (deleting) on first read, we mark it as delivered.
- * This way if the file arrives after the first prompt, it still gets
- * picked up on the next prompt. The 10-minute expiry handles cleanup.
- */
-function loadAndConsumePhaseEvaluation() {
-  const evalPath = path.join(process.cwd(), PHASE_EVAL_PATH);
-  try {
-    if (!fs.existsSync(evalPath)) {
-      return null;
-    }
-
-    const content = fs.readFileSync(evalPath, 'utf8');
-    const data = JSON.parse(content);
-
-    // Skip if already delivered
-    if (data.delivered) {
-      // Check expiry — clean up after 10 minutes
-      const timestamp = new Date(data.timestamp);
-      const now = new Date();
-      const ageMinutes = (now - timestamp) / 1000 / 60;
-      if (ageMinutes > 10) {
-        fs.unlinkSync(evalPath);
-      }
-      return null;
-    }
-
-    // Check if it's recent (within last 10 minutes)
-    const timestamp = new Date(data.timestamp);
-    const now = new Date();
-    const ageMinutes = (now - timestamp) / 1000 / 60;
-
-    if (ageMinutes > 10) {
-      fs.unlinkSync(evalPath);
-      return null;
-    }
-
-    // Mark as delivered instead of deleting
-    data.delivered = true;
-    fs.writeFileSync(evalPath, JSON.stringify(data, null, 2));
-
-    return data.content;
-  } catch {
-    try { fs.unlinkSync(evalPath); } catch {}
-    return null;
-  }
-}
 
 /**
  * Read a spec file
@@ -92,10 +41,22 @@ function logInjection(sessionId, actions) {
   }
 }
 
+// A background-agent completion or Monitor event reaches UserPromptSubmit as a
+// synthetic user turn whose prompt is the task-notification envelope, not genuine
+// user input. Both shapes start with `<task-notification>` (optionally behind the
+// `[SYSTEM NOTIFICATION - NOT USER INPUT]` marker); a real user prompt never does.
+// inject-context uses this to skip the prompt-content matchers (capture, voice,
+// lens, reasoning, spec) so incidental text in an agent result — e.g. an issue
+// title containing "capture worker stdout" — is not read as a user directive.
+// Root of #817; see #824.
+function isBackgroundNotification(prompt) {
+  if (typeof prompt !== 'string') return false;
+  return /^\s*(\[SYSTEM NOTIFICATION - NOT USER INPUT\]|<task-notification>)/.test(prompt);
+}
+
 module.exports = {
   HOME,
-  PHASE_EVAL_PATH,
-  loadAndConsumePhaseEvaluation,
   readSpecFile,
-  logInjection
+  logInjection,
+  isBackgroundNotification
 };

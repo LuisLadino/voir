@@ -33,11 +33,13 @@ const readline = require('readline');
 const { spawn, execFileSync } = require('child_process');
 
 const registry = require('../lib/dispatch-registry.cjs');
+const { parseWorkerResult } = require('../lib/dispatch.cjs');
 
 const IDLE_THRESHOLD_SECS = 300;
 const POLL_INTERVAL_MS = 2000;
 const LIFECYCLE_CHECK_EVERY_TICKS = 15;
 const TITLE_CAP = 50;
+const SUMMARY_CAP = 100;
 const DISPATCH_WAIT_BUDGET_SECS = 30;
 
 // ─────────────────────────── Pure decision logic ───────────────────────────
@@ -125,10 +127,29 @@ function formatEventLine(sid, ev) {
   switch (ev.kind) {
     case 'tool_use':   return `[${sid}] tool_use:${ev.name}`;
     case 'tool_error': return `[${sid}] tool error`;
-    case 'pr_url':     return `[${sid}] PR: ${ev.url}`;
-    case 'result':     return `[${sid}] done status=${ev.subtype} cost=$${ev.cost}`;
+    // #792: a live-tail PR URL is advisory — the tail can't tell a PR the
+    // worker opened from one it cited. trackNewFile gates these to the worker's
+    // own repo; `(seen)` marks them distinct from the authoritative `PR:` line
+    // on done, sourced from the worker's self-reported pr_url.
+    case 'pr_url':     return `[${sid}] PR (seen): ${ev.url}`;
+    // `result` (done) is emitted by lifecycleScan with the rich label + result
+    // summary, not here, where only the bare session-id prefix is available (#788).
+    case 'result':     return null;
     default:           return null;
   }
+}
+
+// #792: decide whether a PR URL scraped from the live stream belongs to the
+// worker's OWN repo. A bare scrape can't tell a PR the worker opened from one
+// it merely cited in research output (e.g. a third-party Skyvern/Playwright
+// PR), producing false "worker opened a PR" signals — including fake
+// outward-action alarms on strangers' repos. Gate the advisory on an owner/repo
+// match against the worker's dispatch target repo. The authoritative PR is the
+// worker's self-reported `pr_url` on the done line, not this scrape.
+function prUrlMatchesRepo(url, repo) {
+  if (!repo || typeof repo !== 'string') return false;
+  const m = String(url || '').match(/github\.com\/([^/]+\/[^/]+)\/pull\/[0-9]+/);
+  return !!m && m[1].toLowerCase() === repo.toLowerCase();
 }
 
 // Decide whether a parsed tail event should reach the Monitor stdout stream.
@@ -136,14 +157,14 @@ function formatEventLine(sid, ev) {
 // high-volume per-tool events must not stream: at 3-5 parallel workers the
 // tool_use/tool_error rate alone floods it, and under plan-only mode every
 // sensitive-file write the built-in gate refuses adds a tool_error (#634).
-// Only terminal/actionable events stream by default — `result` (the done line)
-// and `pr_url`. The idle/crashed lifecycle lines stream from lifecycleScan, not
-// here, so they are unaffected. DISPATCH_VERBOSE=1 restores full per-event
+// Only `pr_url` streams from the live tail by default. The done line streams
+// from lifecycleScan (with the rich label + result summary, #788), alongside
+// the idle/crashed lifecycle lines. DISPATCH_VERBOSE=1 restores full per-event
 // streaming for debugging. tool_use is still parsed and handled internally
 // (idle marker); this gate only controls what reaches stdout.
 function shouldStreamEvent(kind, verbose) {
   if (verbose) return true;
-  return kind === 'result' || kind === 'pr_url';
+  return kind === 'pr_url';
 }
 
 // Has the .jsonl file ever contained a `result` event? Decision input for
@@ -170,6 +191,16 @@ function lastToolName(text) {
   return m ? m[1] : '';
 }
 
+// First line of a worker's structured result summary, truncated for a
+// notification. Empty when the worker emitted no parseable summary, so the
+// done line degrades to "<label>: done <status>" rather than dangling a dash.
+function oneLineSummary(structured, cap = SUMMARY_CAP) {
+  const s = structured && typeof structured.summary === 'string' ? structured.summary.trim() : '';
+  if (!s) return '';
+  const first = s.split('\n')[0].trim();
+  return first.length > cap ? first.slice(0, cap - 3) + '...' : first;
+}
+
 // Prior-session guard. A .jsonl already past IDLE_THRESHOLD_SECS at the
 // moment the watcher first observes it must NOT trigger idle/crashed
 // notifications — it's leftover output from a previous session that
@@ -185,7 +216,7 @@ function shouldStampSkipOnDiscovery({ mtimeSecs, nowSecs, threshold = IDLE_THRES
 // stateless across calls.
 //
 // Actions:
-//   done    — result event seen, not yet notified
+//   done    — result event seen AND worker process exited, not yet notified
 //   idle    — mtime > threshold, no result, not skipped, not yet notified
 //   crashed — pid dead, no result, not skipped, not yet notified
 //   none    — nothing fires this tick
@@ -201,7 +232,17 @@ function classifyLifecycle({
   pidAlive,
   threshold = IDLE_THRESHOLD_SECS
 }) {
-  if (hasResult) {
+  // #791: a `result` event in the stream is NOT proof the worker finished.
+  // In-process subagents and multi-phase workflows emit their own terminal
+  // `result` lines mid-run, sharing the parent session_id and reporting
+  // cumulative cost — observed as a burst of premature "done" lines while the
+  // worker still had hundreds of lines left to run. The reliable terminal
+  // signal is the worker process having exited, which is what the registry's
+  // own R3 pruning rule already gates on. Suppress done while we can prove the
+  // worker is still alive; trust the result once the pid is gone or unknown
+  // (the latter degrades to legacy behavior when liveness can't be checked).
+  const workerAlive = !!pid && pidAlive;
+  if (hasResult && !workerAlive) {
     return doneAlready ? { action: 'none' } : { action: 'done' };
   }
   if (ageSecs >= threshold && !idleAlready && !skipIdle) {
@@ -214,19 +255,21 @@ function classifyLifecycle({
 }
 
 // Build the notification body for a lifecycle event.
-function formatLifecycleNotification({ action, label, subtype, tool, pid }) {
+function formatLifecycleNotification({ action, label, subtype, tool, pid, summary, cost, pr }) {
   switch (action) {
-    case 'done':    return `${label}: done ${subtype || 'unknown'}`;
+    case 'done':    return `${label}: done ${subtype || 'unknown'}${summary ? ` — ${summary}` : ''}${pr ? `  PR: ${pr}` : ''}${cost != null ? `  cost=$${cost}` : ''}`;
     case 'idle':    return `${label}: idle>5m on ${tool || '(no tool yet)'}`;
     case 'crashed': return `${label}: crashed${pid ? ` (pid ${pid} gone)` : ''}`;
     default:        return '';
   }
 }
 
-// Build the Monitor stream line for a lifecycle event. `done` returns null —
-// the live tail's result-event line already announced it.
-function formatLifecycleStreamLine({ action, label, tool }) {
+// Build the Monitor stream line for a lifecycle event. `done` now streams the
+// rich label + result summary from here (#788); the live tail no longer emits a
+// bare-sid done line.
+function formatLifecycleStreamLine({ action, label, tool, subtype, summary, cost, pr }) {
   switch (action) {
+    case 'done':    return `[${label}] done ${subtype || 'unknown'}${summary ? ` — ${summary}` : ''}${pr ? `  PR: ${pr}` : ''}${cost != null ? `  cost=$${cost}` : ''}`;
     case 'idle':    return `[${label}] idle>5m on ${tool || '(no tool yet)'}`;
     case 'crashed': return `[${label}] crashed`;
     default:        return null;
@@ -323,6 +366,21 @@ function makeLabelResolver() {
   };
 }
 
+// Resolve a worker's own repo (owner/name) from the registry, cached. Gates
+// live-tail PR URLs to the worker's repo (#792). Re-resolves until a non-empty
+// repo is found so a worker not yet written to active.jsonl isn't cached as ''.
+function makeRepoResolver() {
+  const cache = new Map();
+  return function repoOf(sid, dispatchDir) {
+    const cached = cache.get(sid);
+    if (cached) return cached;
+    const worker = findWorker(readActive(dispatchDir), sid);
+    const repo = (worker && typeof worker.repo === 'string') ? worker.repo : '';
+    if (repo) cache.set(sid, repo);
+    return repo;
+  };
+}
+
 function tailFile(file, onEvent) {
   // `tail -F -n 0` matches the bash version: follow rotated files, start
   // from end. Failure to spawn or read is silenced — a missed event must
@@ -365,6 +423,7 @@ async function main() {
   const tracked = new Map();   // sid -> { file, child }
   const markers = new Map();   // sid -> { done, idle, crashed, skipIdle, skipCrashed }
   const labelOf = makeLabelResolver();
+  const repoOf = makeRepoResolver();
   const verbose = process.env.DISPATCH_VERBOSE === '1';
 
   const shutdown = () => {
@@ -404,9 +463,12 @@ async function main() {
         const m = markersFor(sid);
         m.idle = false;
       }
-      if (shouldStreamEvent(ev.kind, verbose)) {
-        emitStream(formatEventLine(sidShort, ev));
-      }
+      if (!shouldStreamEvent(ev.kind, verbose)) return;
+      // #792: drop PR URLs that aren't on the worker's own repo — those are
+      // citations in research output, not PRs this worker opened. Verbose mode
+      // shows everything for debugging.
+      if (ev.kind === 'pr_url' && !verbose && !prUrlMatchesRepo(ev.url, repoOf(sid, dispatchDir))) return;
+      emitStream(formatEventLine(sidShort, ev));
     });
     tracked.set(sid, { file, child });
   }
@@ -441,11 +503,19 @@ async function main() {
       const label = labelOf(sid, dispatchDir);
 
       if (decision.action === 'done') {
-        const subtype = lastResultSubtype(text) || 'unknown';
+        const parsed = parseWorkerResult(file);
+        const subtype = (parsed.raw && parsed.raw.subtype) || lastResultSubtype(text) || 'unknown';
+        const summary = oneLineSummary(parsed.structured);
+        const cost = parsed.cost_usd ? parsed.cost_usd.toFixed(2) : null;
+        // #792: authoritative PR — the worker's self-reported pr_url from its
+        // terminal result, not a scraped/cited URL from the live tail.
+        const pr = (parsed.structured && typeof parsed.structured.pr_url === 'string')
+          ? parsed.structured.pr_url.trim() : '';
         m.done = true;
         m.idle = false;
         m.crashed = false;
-        osaNotify(formatLifecycleNotification({ action: 'done', label, subtype }));
+        emitStream(formatLifecycleStreamLine({ action: 'done', label, subtype, summary, cost, pr }));
+        osaNotify(formatLifecycleNotification({ action: 'done', label, subtype, summary, cost, pr }));
         continue;
       }
 
@@ -499,10 +569,12 @@ if (require.main === module) {
     buildWorkerLabel,
     parseEventLine,
     formatEventLine,
+    prUrlMatchesRepo,
     shouldStreamEvent,
     hasResultEvent,
     lastResultSubtype,
     lastToolName,
+    oneLineSummary,
     shouldStampSkipOnDiscovery,
     classifyLifecycle,
     formatLifecycleNotification,

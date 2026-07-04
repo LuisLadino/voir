@@ -21,11 +21,24 @@
  *
  * Usage:
  *   node skill-trigger-walk.cjs <skill-name> [--eval <path>] [--runs N]
- *                               [--model M] [--json]
+ *                               [--model M] [--timeout MS] [--max-sessions N]
+ *                               [--json]
+ *
+ * Cost: each phrase fires a fresh `claude -p`, runs times, so one walk is
+ * phrases x runs cold sessions; the count is printed before spawning. On Max
+ * those draw from the 5-hour quota window — a full-suite walk over every skill
+ * is hundreds of sessions and can lock out interactive work (#852). Pass
+ * --max-sessions N to abort an over-budget run; --model haiku for a cheap
+ * pre-screen.
  *
  * Default eval path: .claude/research/skill-trigger-evals/<name>.md
  * Default model: the user's configured model (no --model flag), so the walk
  * tests the routing the project actually runs. Pass --model to pin one.
+ * Default per-run timeout: 120000ms. A run that has not fired the skill by the
+ * timeout is scored not-fired — correct for a should-not-fire phrase that makes
+ * the model work instead of routing, and the reason a lower --timeout speeds the
+ * walk without changing verdicts, since routing decisions land in the first
+ * seconds while extended work is a not-fired either way.
  */
 
 const fs = require('fs');
@@ -162,22 +175,36 @@ async function walk(skillName, cases, opts) {
 // ---- CLI ----
 
 function parseArgs(argv) {
-  const out = { runs: 3, model: null, evalPath: null, json: false, skill: null };
+  const out = { runs: 3, model: null, evalPath: null, json: false, skill: null, timeoutMs: 120000, maxSessions: null };
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
     if (a === '--runs') { const n = parseInt(argv[++i], 10); out.runs = Number.isInteger(n) && n > 0 ? n : 3; }
     else if (a === '--model') out.model = argv[++i];
     else if (a === '--eval') out.evalPath = argv[++i];
+    else if (a === '--timeout') { const n = parseInt(argv[++i], 10); out.timeoutMs = Number.isInteger(n) && n > 0 ? n : 120000; }
+    else if (a === '--max-sessions') { const n = parseInt(argv[++i], 10); out.maxSessions = Number.isInteger(n) && n > 0 ? n : null; }
     else if (a === '--json') out.json = true;
     else if (!out.skill) out.skill = a;
   }
   return out;
 }
 
+// Estimate the cold `claude -p` sessions a walk will spawn — one per phrase per
+// run — and decide whether it exceeds an opt-in cap. Pure so the guard is
+// testable without spawning; the whole point is not to fire the walk to learn
+// its cost (#852). A full-suite walk loops this over every skill, so the
+// per-skill estimate printed at start is what a batch runner multiplies — on
+// Max that sum draws from the same 5-hour window interactive work needs.
+function planSessions(caseCount, runs, maxSessions) {
+  const estimate = caseCount * runs;
+  const exceeded = Number.isInteger(maxSessions) && maxSessions > 0 && estimate > maxSessions;
+  return { estimate, exceeded };
+}
+
 async function main() {
   const opts = parseArgs(process.argv.slice(2));
   if (!opts.skill) {
-    console.error('usage: skill-trigger-walk.cjs <skill-name> [--eval <path>] [--runs N] [--model M] [--json]');
+    console.error('usage: skill-trigger-walk.cjs <skill-name> [--eval <path>] [--runs N] [--model M] [--timeout MS] [--max-sessions N] [--json]');
     process.exit(2);
   }
   const cwd = process.cwd();
@@ -193,10 +220,23 @@ async function main() {
     process.exit(2);
   }
 
+  // Routing is model-specific, so a verdict is only interpretable with the model
+  // attached. `(configured default)` means the CLI's model, which varies by setup.
+  const model = opts.model || '(configured default)';
+  // Make the cost visible before spawning: each phrase fires a cold `claude -p`,
+  // runs times, and on Max those draw from the same 5-hour quota window
+  // interactive work needs (#852). --max-sessions aborts an over-budget run.
+  const plan = planSessions(cases.length, opts.runs, opts.maxSessions);
+  console.error(`walk: ${opts.skill} — ${cases.length} phrases × ${opts.runs} runs = ~${plan.estimate} cold claude -p sessions on ${model}`);
+  if (plan.exceeded) {
+    console.error(`estimated ${plan.estimate} sessions exceeds --max-sessions ${opts.maxSessions}; raise it to proceed. A full-suite walk over every skill is hundreds of sessions and can exhaust the Max 5-hour window — run deliberately, at low concurrency, and consider --model haiku for a cheap pre-screen (skills.md).`);
+    process.exit(2);
+  }
+
   const results = await walk(opts.skill, cases, {
     runs: opts.runs,
     model: opts.model,
-    timeoutMs: 120000,
+    timeoutMs: opts.timeoutMs,
     cwd,
     onResult: (r) => {
       const status = r.pass ? 'PASS' : 'FAIL';
@@ -207,9 +247,6 @@ async function main() {
 
   const passed = results.filter((r) => r.pass).length;
   const summary = { total: results.length, passed, failed: results.length - passed };
-  // Routing is model-specific, so a verdict is only interpretable with the model
-  // attached. `(configured default)` means the CLI's model, which varies by setup.
-  const model = opts.model || '(configured default)';
   console.error(`\n${passed}/${results.length} phrases pass — model: ${model}, ${opts.runs} runs/phrase`);
   if (opts.json) console.log(JSON.stringify({ skill: opts.skill, model, runs: opts.runs, summary, results }, null, 2));
   process.exit(summary.failed === 0 ? 0 : 1);
@@ -219,4 +256,4 @@ if (require.main === module) {
   main().catch((err) => { console.error(err); process.exit(2); });
 }
 
-module.exports = { parseEvalMarkdown, decideFromEvents, parseArgs };
+module.exports = { parseEvalMarkdown, decideFromEvents, parseArgs, planSessions };

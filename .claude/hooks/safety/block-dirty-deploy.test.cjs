@@ -5,7 +5,9 @@ const {
   matchesDeploy,
   isDispatchWorker,
   findForeignDirty,
+  getDirtyFiles,
 } = require('./block-dirty-deploy.cjs');
+const { dirtyFiles } = require('../lib/deploy-currency.cjs');
 
 let passed = 0, failed = 0;
 function test(name, fn) {
@@ -67,6 +69,11 @@ test('returns all dirty when edited is empty', () => {
   const edited = new Set();
   assert.deepStrictEqual(findForeignDirty(dirty, edited), ['a.md']);
 });
+
+console.log('porcelain parser dedup (#724)');
+
+test('getDirtyFiles is the shared deploy-currency.dirtyFiles', () =>
+  assert.strictEqual(getDirtyFiles, dirtyFiles));
 
 console.log(`\n${passed} passed, ${failed} failed`);
 process.exit(failed > 0 ? 1 : 0);

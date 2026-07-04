@@ -19,12 +19,11 @@
  *      ALLOW_DIRTY_DEPLOY=1 in the command env or process env.
  */
 
-const { spawnSync } = require('child_process');
-
 const {
   getSessionId,
   readTrackingEvents,
 } = require('../lib/session-utils.cjs');
+const { dirtyFiles: getDirtyFiles } = require('../lib/deploy-currency.cjs');
 
 const DEPLOY_PATTERNS = [
   /\bvercel\s+(deploy|--prod|--production)\b/i,
@@ -46,19 +45,6 @@ function matchesDeploy(command) {
 function isDispatchWorker(cwd) {
   return typeof cwd === 'string' &&
     /\/\.claude\/worktrees\/dispatch-[0-9a-f]+(\/|$)/.test(cwd);
-}
-
-function getDirtyFiles(cwd) {
-  const r = spawnSync('git', ['status', '--porcelain'], { cwd, encoding: 'utf8' });
-  if (r.status !== 0) return [];
-  return r.stdout
-    .split('\n')
-    .filter(Boolean)
-    .map(line => {
-      const trimmed = line.slice(3);
-      const renamed = trimmed.split(' -> ');
-      return renamed[renamed.length - 1].trim().replace(/^"|"$/g, '');
-    });
 }
 
 function getSessionEditedFiles(sessionId, cwd) {

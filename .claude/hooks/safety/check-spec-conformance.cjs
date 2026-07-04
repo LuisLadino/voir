@@ -123,6 +123,11 @@ function getStagedDiff(cwd) {
   return git(['diff', '--cached', '--no-color', '-U0'], cwd) || '';
 }
 
+// Token-level dequote: strip one leading and one trailing quote char from an
+// already-split refspec token. Deliberately NOT the shared stripQuotedRegions
+// in command-position.cjs — that blanks whole quoted REGIONS in a full command
+// string, whereas this dequotes a single token after splitting. Different
+// operation, kept local on purpose (#769).
 function stripQuotes(token) {
   return token.replace(/^['"]/, '').replace(/['"]$/, '');
 }

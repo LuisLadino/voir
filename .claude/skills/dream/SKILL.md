@@ -13,8 +13,12 @@ You are performing a dream — a reflective pass over your memory files. Synthes
 Get the lay of the land before changing anything.
 
 ```bash
-# Find the memory directory for this project
-WORKSPACE_KEY=$(git rev-parse --show-toplevel 2>/dev/null | sed 's|/|-|g')
+# Find the memory directory for this project.
+# Anchor on the shared git common-dir (the main repo's .git), never the worktree:
+# Conductor / claude -w / dispatch run in worktrees where --show-toplevel is a key
+# no other session reads, while native memory injection reads the main-repo key.
+MAIN_ROOT=$(dirname "$(git rev-parse --path-format=absolute --git-common-dir 2>/dev/null)")
+WORKSPACE_KEY=$(printf '%s' "$MAIN_ROOT" | sed 's|/|-|g')
 MEMORY_DIR="$HOME/.claude/projects/$WORKSPACE_KEY/memory"
 ls -la "$MEMORY_DIR/"
 ```
@@ -60,15 +64,34 @@ For each thing worth updating, edit or rewrite the memory file. Follow the memor
 - Create new memories — this phase is about maintaining what exists
 - Change the meaning of a memory — if a feedback memory says "don't rush", keep the intent even if you reword it
 
-## Phase 4 — Prune and Index
+## Phase 4 — Reconcile and Prune
 
-Update `MEMORY.md` to stay under 200 lines and under 25KB.
+`MEMORY.md` is a **curated hot set, not a mirror of the dir.** It auto-loads into every session, so it holds ONLY what must be present without a recall: active project state, references, and the current + most-recent context evals. Everything else stays on disk for cognee's on-demand recall (Phase 5) or gets deleted. Feedback and user memories do NOT belong here — they live in the shared layer `~/.claude/memory/` and inject separately (#679).
 
-- Remove pointers to memories that are stale, wrong, or superseded
-- Shorten verbose index entries — each should be one line under 150 characters: `- [Title](file.md) — one-line hook`
-- Add pointers to any memories that exist as files but aren't in the index
-- Verify every index entry points to a file that actually exists
-- Remove orphaned files (files with no index entry and no useful content)
+Do NOT eyeball the dir to decide what is stale. Get the deterministic reconciliation report, which classifies every file against the index and the shared layer:
+
+```bash
+node .claude/skills/dream/memory-reconcile.cjs "$MEMORY_DIR"
+```
+
+Before the first deletion or move, back the dir up once — it is not version-controlled, so a delete is otherwise unrecoverable:
+
+```bash
+cp -R "$MEMORY_DIR" "$MEMORY_DIR-backup-$(date +%Y%m%d-%H%M%S)"
+```
+
+ALWAYS back up before mutating. NEVER delete a memory file without the backup in place. Then act on each bucket the report prints:
+
+- **MISSING** (index pointer → no file) — remove the dangling pointer from `MEMORY.md`.
+- **DELETABLE EVALS** — delete the files. They are de-indexed point-in-time snapshots, excluded from cognee, so they are pure dead disk. Keep only the evals already in the index (current + recent).
+- **SHARED DUPLICATES** — delete the per-project copy. The shared layer holds the canonical one; keeping both double-injects the same memory.
+- **PROTECTED TOMBSTONES** — NEVER delete. These exist to keep a killed idea from returning (their own text says so). Add an index pointer if one is missing so the tombstone stays visible.
+- **DARK FEEDBACK → shared** — review each. A universal "how Luis works" rule gets `type: feedback` in its frontmatter, moves to `~/.claude/memory/`, gets a line in that dir's `MEMORY.md`, then its project copy is deleted. A feedback memory that is specific to THIS project stays and gets an index pointer. Do NOT blind-move the whole bucket — the universal-vs-project call is a judgment.
+- **STALE PROJECT CANDIDATES** — review each. If its state changed, update it (Phase 3). If it is genuinely superseded AND adds nothing a live memory already carries, delete it. If it is still load-bearing, add an index pointer so it stops being dark. NEVER auto-delete this bucket.
+
+For entries that stay in the index: one line each, under 150 characters, `- [Title](file.md) — one-line hook`. Keep `MEMORY.md` under 200 lines and 25KB.
+
+Report every file deleted or moved in the Output. NEVER let a deletion be silent.
 
 ## Phase 5 — Sync to cognee
 

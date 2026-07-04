@@ -119,33 +119,7 @@ Consequence: benign warnings or telemetry emitted by embedded libraries, for exa
 - The output is benign and only visible to operators who deliberately inspect MCP state.
 - The library's opt-out flag is unstable or undocumented, and gating it creates a maintenance burden.
 
-**Contrast with CLI scripts in the same repo:** CLI scripts under `scripts/mcp-servers/` that run attached to the user's terminal, such as `migrate-from-omega.cjs`, have user-visible stderr. Library noise surfaces directly in the user's output stream. `migrate-from-omega.cjs` sets `process.env.MEM0_TELEMETRY = 'false'` before `require('mem0ai/oss')` for this reason; see `scripts/mcp-servers/migrate-from-omega.cjs:17-21` and issue #262. The same library inside `scripts/mcp-servers/mem0.cjs` does not set the flag because its stderr is captured by Claude Code and the noise is not user-visible. Issue #270 records that scope decision.
-
-## Wrapper score semantics: mem0 search
-
-The mem0 wrapper at `scripts/mcp-servers/mem0.cjs` passes `threshold` through to `memory.search`. Scores are semantic similarity in [0, 1] from the configured embedder. Current stack uses `nomic-embed-text` via Ollama.
-
-**SDK defaults:**
-
-- Default `threshold` when omitted: 0.1, per `mem0ai/oss` at `index.js:6598`.
-- Valid range: 0 to 1 inclusive. SDK throws for out-of-range input at `index.js:5857-5866`.
-- The wrapper Zod schema enforces the same range at the MCP boundary for earlier failure.
-
-**Empirical distribution on the 31-memory post-migration corpus:**
-
-Signal and decoys overlap on this corpus. True hits observed 0.527 to 0.783. Abstention decoy top-1 observed at 0.598. No universal threshold cleanly separates hits from decoys. See issue #265 for the full Q1-Q7 run and #266 for the re-verification.
-
-**When to set `threshold`:**
-
-- Consumer tolerates missing a low-confidence true hit: pass a higher threshold such as 0.6 to filter noise.
-- Consumer needs recall over precision: omit, or pass a low value such as 0.1.
-- Abstention logic lives in the consumer, not the wrapper. Read `score` from each result and decide per-use-case.
-
-**How to interpret `score`:**
-
-The wrapper returns `{ results: [{ id, memory, score, metadata, ... }] }`. `score` is post-threshold semantic similarity. A consuming agent that needs "answer or abstain" behavior must inspect scores before treating top-1 as an answer.
-
-**Anti-pattern:** Hardcoding a mem0 `threshold` above 0.1 at the wrapper. Empirical data on the current corpus shows true hits score as low as 0.527 and decoys reach 0.598. A universal threshold filters real hits or admits decoys. Keep `threshold` a pass-through and push abstention policy to the consumer.
+**Contrast with CLI scripts:** A CLI script that runs attached to the user's terminal has user-visible stderr, so a noisy library's telemetry surfaces directly in the user's output stream — suppress it at the source by setting the library's telemetry-off env var before requiring it. The same library inside an MCP server needs no such flag: Claude Code captures the server's stderr, so the noise is not user-visible. The kit's retired mem0 wrappers were the original worked example (#262 for the CLI suppression, #270 for the MCP-captured scope decision).
 
 ## Anti-patterns
 

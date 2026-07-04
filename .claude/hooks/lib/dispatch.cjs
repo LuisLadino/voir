@@ -31,6 +31,7 @@ const {
   appendTrackingEvent
 } = require('./session-utils.cjs');
 const registry = require('./dispatch-registry.cjs');
+const worktree = require('./worktree.cjs');
 
 const DEFAULT_MODEL = 'opus';
 const DEFAULT_MAX_CONCURRENT = 5;
@@ -105,6 +106,79 @@ const CLAUDE_COPY_EXCLUDE = new Set(['worktrees', 'dispatch']);
 
 function dispatchDir(projectRoot) {
   return path.join(projectRoot || resolveProjectRoot(), DISPATCH_DIR_REL);
+}
+
+// ── #793: parent-tree contamination backstop ──────────────────────────────
+// A worker can, early in its session before it has oriented, build an ABSOLUTE
+// path into the parent checkout and write a deliverable there instead of its
+// worktree. The resolvers are correct (proven in #793) — this is a worker
+// orientation misfire, not a path bug; the cure is #797. This is the detection
+// backstop: snapshot the parent's dirty state at dispatch, and at --synthesize
+// surface any file that appeared in the parent tree during the run. Advisory
+// only; never deletes.
+const PARENT_BASELINE_NAME = '.parent-baseline.json';
+
+function parentBaselinePath(projectRoot) {
+  return path.join(dispatchDir(projectRoot), PARENT_BASELINE_NAME);
+}
+
+// Parse `git status --porcelain` into the set of changed paths. Lines are
+// "XY <path>", or "XY <old> -> <new>" for renames (take the new path).
+function parsePorcelainPaths(text) {
+  const set = new Set();
+  for (const raw of String(text || '').split('\n')) {
+    const line = raw.replace(/\r$/, '');
+    if (line.length < 4) continue;
+    let p = line.slice(3);
+    const arrow = p.indexOf(' -> ');
+    if (arrow !== -1) p = p.slice(arrow + 4);
+    if (p.startsWith('"') && p.endsWith('"')) p = p.slice(1, -1);
+    if (p) set.add(p);
+  }
+  return set;
+}
+
+// Paths dirty in `current` but not in `baseline` — files that appeared in the
+// parent tree during the run. Pure; unit-tested.
+function foreignParentFiles(baselineText, currentText) {
+  const base = parsePorcelainPaths(baselineText);
+  return [...parsePorcelainPaths(currentText)].filter(p => !base.has(p)).sort();
+}
+
+function gitPorcelain(cwd, _spawnSync) {
+  const sp = _spawnSync || spawnSync;
+  try {
+    const r = sp('git', ['status', '--porcelain'], { cwd, encoding: 'utf8' });
+    return (r && r.status === 0 && typeof r.stdout === 'string') ? r.stdout : null;
+  } catch { return null; }
+}
+
+function captureParentBaseline(projectRoot, cwd) {
+  const porcelain = gitPorcelain(cwd);
+  if (porcelain === null) return;
+  try {
+    fs.mkdirSync(dispatchDir(projectRoot), { recursive: true });
+    fs.writeFileSync(parentBaselinePath(projectRoot), JSON.stringify({ cwd, porcelain }));
+  } catch {}
+}
+
+// Files that appeared in the parent tree since the baseline (advisory). Empty
+// when there's no baseline or git is unavailable. Consumes the baseline so a
+// repeat --synthesize doesn't re-warn against a stale snapshot.
+function parentContamination(projectRoot) {
+  const bp = parentBaselinePath(projectRoot);
+  if (!fs.existsSync(bp)) return [];
+  let baseline;
+  try { baseline = JSON.parse(fs.readFileSync(bp, 'utf8')); } catch { return []; }
+  if (!baseline || !baseline.cwd) return [];
+  const current = gitPorcelain(baseline.cwd);
+  try { fs.unlinkSync(bp); } catch {}
+  if (current === null) return [];
+  // Never flag dispatch's own scratch (the baseline file, worker .jsonl,
+  // nested worktrees) as deliverable-tree contamination. Normally gitignored
+  // and invisible to porcelain; this is belt-and-suspenders for misconfigured repos.
+  return foreignParentFiles(baseline.porcelain || '', current)
+    .filter(p => !/^\.claude\/(dispatch|worktrees)(\/|$)/.test(p));
 }
 
 function resultPath(projectRoot, sessionId) {
@@ -272,6 +346,15 @@ function buildPrompt(target, opts) {
 
   const common = [
     'You are a full Claude Code session working autonomously.',
+    '',
+    'ORIENTATION. Your working directory is a dedicated git worktree, a second checkout',
+    'of the repo for this task. Every project file you create or edit, code, docs, specs,',
+    'anything you would commit, must resolve under this working directory. Do NOT build or',
+    'reuse an absolute path into a parent, sibling, or canonical checkout of the repo. If a',
+    'path you read from the issue, a spec, or prior context is absolute and points at another',
+    'checkout, treat it as stale: strip it to the repo-relative path so it resolves under your',
+    'cwd. Run `pwd` if unsure; that is your root. User-scope files under `~/.claude/`, such as',
+    'memory, are the exception and stay where they are.',
     '',
     ...workflowClause,
     '',
@@ -840,17 +923,14 @@ function propagateUntrackedContext(srcRoot, worktreePath, dirs, files) {
 // branch, base, propagated, failed } or throws on git failure.
 function prepareWorktree(workerCwd, sessionId, _spawnSync) {
   const sp = _spawnSync || spawnSync;
+  const run = worktree.makeRunner(sp);
   const branch = `dispatch-${sessionId}`;
   const worktreePath = path.join(workerCwd, '.claude', 'worktrees', `dispatch-${sessionId}`);
-  fs.mkdirSync(path.dirname(worktreePath), { recursive: true });
 
   const base = resolveBaseRef(workerCwd, sp);
-  const r = sp('git', ['worktree', 'add', '-b', branch, worktreePath, base], {
-    cwd: workerCwd,
-    encoding: 'utf8'
-  });
-  if (!r || r.status !== 0) {
-    const detail = (r && (r.stderr || r.stdout)) ? String(r.stderr || r.stdout).trim() : 'unknown error';
+  const r = worktree.add({ repo: workerCwd, path: worktreePath, branch, base, run });
+  if (r.status !== 0) {
+    const detail = (r.stderr || r.stdout || '').trim() || 'unknown error';
     throw new Error(`git worktree add failed: ${detail}`);
   }
 
@@ -869,11 +949,16 @@ function generateSessionId() {
   return crypto.randomBytes(6).toString('hex');
 }
 
-function buildWorkerEnv() {
+function buildWorkerEnv(worktreePath) {
   const env = {};
   for (const key of WORKER_ENV_ALLOWLIST) {
     if (process.env[key] !== undefined) env[key] = process.env[key];
   }
+  // A worker's project root is always its own worktree, never the
+  // orchestrator's. CLAUDE_PROJECT_DIR is in the allowlist and resolveProjectRoot
+  // returns it first, before any cwd walk, so an inherited orchestrator value
+  // would point every worker hook at the parent dir. Override it. See #796.
+  if (worktreePath) env.CLAUDE_PROJECT_DIR = worktreePath;
   return env;
 }
 
@@ -915,7 +1000,7 @@ function spawnWorker(target, opts, projectRoot, workerCwd) {
       detached: true,
       stdio: ['ignore', outStream, outStream],
       cwd: wt.worktreePath,
-      env: buildWorkerEnv()
+      env: buildWorkerEnv(wt.worktreePath)
     });
   } finally {
     // Close parent's copy of the fd. Child retains its own dup.
@@ -1226,6 +1311,14 @@ function cmdSynthesize(projectRoot) {
   pruneWorktrees([projectRoot, ...enriched.map(r => r.cwd)]);
   try { pruneActive(projectRoot); } catch {}
 
+  const contaminated = parentContamination(projectRoot);
+  if (contaminated.length) {
+    process.stdout.write(`\n⚠️  Parent-tree check (#793): ${contaminated.length} file(s) appeared in the orchestrator's working tree during this run:\n`);
+    for (const f of contaminated.slice(0, 20)) process.stdout.write(`    ${f}\n`);
+    if (contaminated.length > 20) process.stdout.write(`    … and ${contaminated.length - 20} more\n`);
+    process.stdout.write('  If any are worker output that leaked out of a worktree, move or quarantine them. Your own edits during the run show here too — advisory, nothing deleted.\n');
+  }
+
   try {
     appendTrackingEvent(getSessionId(null), {
       type: 'dispatch_synthesized',
@@ -1239,25 +1332,27 @@ function cmdSynthesize(projectRoot) {
 // record so it works for cross-repo workers (worktree lives in record.cwd's
 // repo, not projectRoot). Falls back to the path convention for legacy
 // active.jsonl entries written before worktreePath was recorded.
-function cleanupWorktree(record, projectRoot) {
+function cleanupWorktree(record, projectRoot, opts = {}) {
+  const sp = opts.spawnSync || spawnSync;
+  const isAlive = opts.pidAlive || pidAlive;
+  const run = worktree.makeRunner(sp);
   const worktreePath = (record && record.worktreePath)
     || path.join(projectRoot, '.claude', 'worktrees', `dispatch-${record.sessionId}`);
   const repoCwd = (record && record.cwd) || projectRoot;
-  try {
-    if (!fs.existsSync(worktreePath)) return false;
-    const res = spawnSync('git', ['worktree', 'remove', worktreePath, '--force'], {
-      cwd: repoCwd,
-      encoding: 'utf8'
-    });
-    if (res.status === 0) {
-      process.stdout.write(`Removed worktree ${path.basename(worktreePath)}\n`);
-      // Best-effort: drop the now-unused dispatch branch so worktree churn
-      // doesn't accumulate stale branches.
-      const branch = (record && record.branch) || `dispatch-${record.sessionId}`;
-      try { spawnSync('git', ['branch', '-D', branch], { cwd: repoCwd, encoding: 'utf8' }); } catch {}
-      return true;
-    }
-  } catch {}
+  const branch = (record && record.branch) || `dispatch-${record.sessionId}`;
+  // pidGuard is set only when the record carries a pid, so the spawn-error path
+  // (pidless record) never consults liveness. #791: a still-running worker is
+  // never reaped — safeRemove returns skipped and we retain the worktree.
+  const pidGuard = (record && typeof record.pid === 'number') ? { pid: record.pid, isAlive } : null;
+  const res = worktree.safeRemove({ repo: repoCwd, path: worktreePath, branch, pidGuard, run });
+  if (res.skipped) {
+    process.stdout.write(`Skipped reap: worker ${record.sessionId} (pid ${record.pid}) still running; worktree retained\n`);
+    return false;
+  }
+  if (res.removed) {
+    process.stdout.write(`Removed worktree ${path.basename(worktreePath)}\n`);
+    return true;
+  }
   return false;
 }
 
@@ -1266,7 +1361,7 @@ function cleanupWorktree(record, projectRoot) {
 function pruneWorktrees(cwds) {
   const list = Array.isArray(cwds) ? cwds : [cwds];
   for (const cwd of new Set(list.filter(Boolean))) {
-    try { spawnSync('git', ['worktree', 'prune'], { cwd, encoding: 'utf8' }); } catch {}
+    worktree.prune({ repo: cwd });
   }
 }
 
@@ -1339,6 +1434,7 @@ function selectOrphanWorktrees(projectRoot, worktrees, activeWorkers, selfPath) 
 // rest. Returns { removed: [names], failed: [{ name, error }] }. See #566.
 function cleanupOrphanWorktrees(projectRoot, opts = {}) {
   const sp = opts.spawnSync || spawnSync;
+  const run = worktree.makeRunner(sp);
   const selfPath = opts.cwd || process.cwd();
   const now = opts.now || Date.now();
   const minAgeMs = opts.minAgeMs ?? ORPHAN_WORKTREE_MIN_AGE_MS;
@@ -1377,32 +1473,16 @@ function cleanupOrphanWorktrees(projectRoot, opts = {}) {
     // skipping a worktree when no floor was asked for.
     if (minAgeMs > 0 && now - mtimeMs < minAgeMs) continue;
 
-    let r;
-    try {
-      r = sp('git', ['worktree', 'remove', wt.path, '--force'], {
-        cwd: projectRoot,
-        encoding: 'utf8'
-      });
-    } catch (err) {
-      failed.push({ name, error: err.message });
-      continue;
-    }
-    if (r && r.status === 0) {
-      removed.push(name);
-      if (wt.branch) {
-        try {
-          sp('git', ['branch', '-D', wt.branch], { cwd: projectRoot, encoding: 'utf8' });
-        } catch {}
-      }
-    } else {
-      const detail = (r && (r.stderr || r.stdout))
-        ? String(r.stderr || r.stdout).trim()
-        : 'unknown error';
-      failed.push({ name, error: detail });
-    }
+    // requireExists:false — the orphan was just listed and stat'd, so it exists;
+    // force-removal is safe by construction (an orphan reaches here only after its
+    // registry entry is gone). branch is read from porcelain so a pre-#463
+    // `worktree-dispatch-<sid>` ref is deleted too. No pidGuard: orphans are dead.
+    const res = worktree.safeRemove({ repo: projectRoot, path: wt.path, branch: wt.branch, requireExists: false, run });
+    if (res.removed) removed.push(name);
+    else failed.push({ name, error: res.reason || 'unknown error' });
   }
 
-  try { sp('git', ['worktree', 'prune'], { cwd: projectRoot, encoding: 'utf8' }); } catch {}
+  worktree.prune({ repo: projectRoot, run });
   return { removed, failed };
 }
 
@@ -1609,6 +1689,10 @@ function cmdDispatch(parsed, projectRoot) {
   }
   try { pruneActive(projectRoot); } catch {}
 
+  // #793: snapshot the parent tree before any worker runs so --synthesize can
+  // surface deliverables that leaked into the orchestrator's checkout.
+  try { captureParentBaseline(projectRoot, workerCwd); } catch {}
+
   // #280: skip targets that have a prior plan comment or already-closed issue,
   // unless --force overrides. Prevents stale-queue dispatch (#228 twice, #251, #246).
   const toSpawn = [];
@@ -1748,6 +1832,10 @@ module.exports = {
   buildWorkerEnv,
   pidIsClaudeWorker,
   dispatchDir,
+  parsePorcelainPaths,
+  foreignParentFiles,
+  captureParentBaseline,
+  parentContamination,
   resultPath,
   cleanupMarkerPath,
   shouldRunCleanup,

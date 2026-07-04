@@ -24,11 +24,17 @@ function test(name, fn) {
 }
 
 function runHook(inputObj, { cwd, env } = {}) {
+  // Resolution order (voice-context.md) puts CLAUDE_PROJECT_DIR first. Tests that
+  // assert target-path resolution must not inherit the suite session's value, or
+  // it overrides the fixture. Strip it from the base; an explicit `env` override
+  // (the env-first precedence test below) still wins via the spread. (#870)
+  const base = { ...process.env };
+  delete base.CLAUDE_PROJECT_DIR;
   const result = spawnSync('node', [HOOK], {
     input: JSON.stringify(inputObj),
     encoding: 'utf8',
     cwd: cwd || process.cwd(),
-    env: env ? { ...process.env, ...env } : process.env
+    env: env ? { ...base, ...env } : base
   });
   return { exitCode: result.status, stderr: result.stderr, stdout: result.stdout };
 }
@@ -105,6 +111,52 @@ voices:
       session_id: 's1'
     }, { cwd: dir });
     assert.strictEqual(r.exitCode, 0);
+  });
+});
+
+// #752: VOICE=none as an echo ARGUMENT, not a command-position env prefix, must
+// not resolve the override. A bare `\s`-prefixed regex matched the space before
+// the argument and skipped the gate (false negative). The command-position
+// anchor ignores it, so the gate fires via the default voice.
+test('VOICE=none as an echo argument on pbcopy → block (not an env prefix)', () => {
+  withProject(`
+default: luis
+voices:
+  luis:
+    rules: "L"
+  none:
+    rules: null
+`, dir => {
+    const r = runHook({
+      tool_name: 'Bash',
+      tool_input: { command: 'echo VOICE=none | pbcopy' },
+      session_id: 's1'
+    }, { cwd: dir });
+    assert.strictEqual(r.exitCode, 2,
+      `expected block: VOICE=none is an argument, not a prefix; got ${r.exitCode} stderr=${r.stderr}`);
+    assert.ok(r.stderr.includes('VOICE CHECK: luis'));
+  });
+});
+
+// #752: a real env prefix ahead of VOICE= still honors the override. LEAD's
+// optional VAR=val group backtracks so the core VOICE= matches at command
+// position even with a leading assignment.
+test('FOO=bar VOICE=none env prefix on pbcopy → allow (leading env var)', () => {
+  withProject(`
+default: luis
+voices:
+  luis:
+    rules: "L"
+  none:
+    rules: null
+`, dir => {
+    const r = runHook({
+      tool_name: 'Bash',
+      tool_input: { command: 'FOO=bar VOICE=none echo hi | pbcopy' },
+      session_id: 's1'
+    }, { cwd: dir });
+    assert.strictEqual(r.exitCode, 0,
+      `expected allow: VOICE=none is a real prefix; got ${r.exitCode} stderr=${r.stderr}`);
   });
 });
 
@@ -317,6 +369,24 @@ voices:
   });
 });
 
+test('pbcopy sink inside a command substitution in double quotes → block (#851)', () => {
+  withProject(`
+default: luis
+voices:
+  luis:
+    rules: "L"
+`, dir => {
+    const r = runHook({
+      tool_name: 'Bash',
+      tool_input: { command: `echo "$(make-draft | pbcopy)"` },
+      session_id: 's1'
+    }, { cwd: dir });
+    assert.strictEqual(r.exitCode, 2,
+      `expected block for substitution-wrapped pbcopy sink, got ${r.exitCode} stderr=${r.stderr}`);
+    assert.ok(r.stderr.includes('VOICE CHECK: luis'));
+  });
+});
+
 test('sed with a pbcopy token in a quoted script → allow (#640)', () => {
   withProject(`
 default: luis
@@ -348,6 +418,77 @@ voices:
     }, { cwd: dir });
     assert.strictEqual(r.exitCode, 0,
       `expected allow for gh issue body mentioning pbcopy, got ${r.exitCode} stderr=${r.stderr}`);
+  });
+});
+
+console.log('\n#754 heredoc-body pbcopy sink detection');
+
+test('heredoc body documenting "| pbcopy", command not piped to pbcopy → allow (#754)', () => {
+  withProject(`
+default: luis
+voices:
+  luis:
+    rules: "L"
+`, dir => {
+    const r = runHook({
+      tool_name: 'Bash',
+      tool_input: { command: `PR_BODY=$(cat <<EOF\nRevise then retry: echo x | pbcopy\nEOF\n)\ngh pr create --body "$PR_BODY"` },
+      session_id: 's1'
+    }, { cwd: dir });
+    assert.strictEqual(r.exitCode, 0,
+      `expected allow for heredoc body mentioning pbcopy, got ${r.exitCode} stderr=${r.stderr}`);
+  });
+});
+
+test('quoted-delimiter heredoc (<<\'EOF\') body with "| pbcopy" → allow (#754, strip-order)', () => {
+  withProject(`
+default: luis
+voices:
+  luis:
+    rules: "L"
+`, dir => {
+    const r = runHook({
+      tool_name: 'Bash',
+      tool_input: { command: `BODY=$(cat <<'EOF'\nexample: echo hi | pbcopy\nEOF\n)\ngh issue create --body "$BODY"` },
+      session_id: 's1'
+    }, { cwd: dir });
+    assert.strictEqual(r.exitCode, 0,
+      `expected allow for quoted-delimiter heredoc body, got ${r.exitCode} stderr=${r.stderr}`);
+  });
+});
+
+test('dash heredoc (<<-EOF) with tab-indented body and close, "| pbcopy" inside → allow (#754)', () => {
+  withProject(`
+default: luis
+voices:
+  luis:
+    rules: "L"
+`, dir => {
+    const r = runHook({
+      tool_name: 'Bash',
+      tool_input: { command: `cat <<-EOF\n\t- echo hi | pbcopy\n\tEOF` },
+      session_id: 's1'
+    }, { cwd: dir });
+    assert.strictEqual(r.exitCode, 0,
+      `expected allow for dash-heredoc body, got ${r.exitCode} stderr=${r.stderr}`);
+  });
+});
+
+test('real heredoc operator-line sink (cat <<EOF | pbcopy) still blocks (#754 guard)', () => {
+  withProject(`
+default: luis
+voices:
+  luis:
+    rules: "L"
+`, dir => {
+    const r = runHook({
+      tool_name: 'Bash',
+      tool_input: { command: `cat <<EOF | pbcopy\nLeverage world-class synergy\nEOF` },
+      session_id: 's1'
+    }, { cwd: dir });
+    assert.strictEqual(r.exitCode, 2,
+      `expected block for real heredoc-to-pbcopy sink, got ${r.exitCode} stderr=${r.stderr}`);
+    assert.ok(r.stderr.includes('VOICE CHECK: luis'));
   });
 });
 
@@ -660,6 +801,43 @@ paths:
       assert.strictEqual(r.exitCode, 2, 'target repo B path rule must fire');
       assert.ok(r.stderr.includes('client:brand'),
         `expected client:brand voice, got: ${r.stderr}`);
+    });
+  });
+});
+
+test('CLAUDE_PROJECT_DIR set → wins over the target-path walk (voice-context.md order)', () => {
+  // The flip side of the cross-repo test above. Resolution order puts
+  // CLAUDE_PROJECT_DIR first, so the target-path walk is only the no-env
+  // (subagent) fallback. Here the target repo has a rule that WOULD block, but
+  // the env points at a decoy with no matching rule, so resolution short-circuits
+  // to the decoy and the write passes. This is the same precedence #872 pins for
+  // dispatch, asserted here for the voice gate. (#870)
+  withProject(`
+default: luis
+voices:
+  luis:
+    rules: "DECOY"
+`, decoy => {
+    withProject(`
+default: luis
+voices:
+  luis:
+    rules: "B-rules"
+  "client:brand":
+    rules: "BRAND-RULES"
+paths:
+  - match: "brand/**/*.md"
+    voice: "client:brand"
+`, repoB => {
+      fs.mkdirSync(path.join(repoB, 'brand'), { recursive: true });
+      const target = path.join(repoB, 'brand/home.md');
+      const r = runHook({
+        tool_name: 'Write',
+        tool_input: { file_path: target, content: 'Some brand copy.' },
+        session_id: 's-envfirst'
+      }, { cwd: repoB, env: { CLAUDE_PROJECT_DIR: decoy } });
+      assert.strictEqual(r.exitCode, 0,
+        `CLAUDE_PROJECT_DIR must win: decoy has no rule for the target path, so the write passes; got ${r.exitCode} stderr=${r.stderr}`);
     });
   });
 });

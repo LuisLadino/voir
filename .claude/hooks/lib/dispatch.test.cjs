@@ -26,6 +26,10 @@ const {
   decidePrune,
   workerHasResultEvent,
   tailJsonLines,
+  parsePorcelainPaths,
+  foreignParentFiles,
+  captureParentBaseline,
+  parentContamination,
   generateSessionId,
   buildWorkerEnv,
   readDispatchConfig,
@@ -34,6 +38,7 @@ const {
   parseWorktreePorcelain,
   selectOrphanWorktrees,
   cleanupOrphanWorktrees,
+  cleanupWorktree,
   cleanupMarkerPath,
   shouldRunCleanup,
   touchCleanupMarker,
@@ -70,6 +75,14 @@ function withTempProject(fn) {
   const dir = fs.realpathSync(rawDir);
   fs.mkdirSync(path.join(dir, '.claude/dispatch'), { recursive: true });
   try { fn(dir); } finally { fs.rmSync(dir, { recursive: true, force: true }); }
+}
+
+function withoutProjectDirEnv(fn) {
+  const saved = process.env.CLAUDE_PROJECT_DIR;
+  delete process.env.CLAUDE_PROJECT_DIR;
+  try { fn(); } finally {
+    if (saved !== undefined) process.env.CLAUDE_PROJECT_DIR = saved;
+  }
 }
 
 console.log('parseArgs: modes');
@@ -293,6 +306,30 @@ test('ad-hoc with track=true tells worker to create an issue first', () => {
 test('ad-hoc with track=false tells worker to skip issue creation', () => {
   const p = buildPrompt({ type: 'adhoc', value: 'task' }, { track: false });
   assert.ok(/--no-track|do not create|skip/i.test(p));
+});
+
+console.log('\nbuildPrompt: worktree orientation (#797)');
+
+test('every prompt variant pins writes to the worktree cwd', () => {
+  const variants = [
+    buildPrompt({ type: 'issue', value: '42' }, {}),
+    buildPrompt({ type: 'issue', value: '42' }, { planOnly: true }),
+    buildPrompt({ type: 'adhoc', value: 'do a thing' }, { track: true }),
+    buildPrompt({ type: 'adhoc', value: 'do a thing' }, { track: false }),
+  ];
+  for (const p of variants) {
+    assert.ok(/ORIENTATION\./.test(p), 'expected ORIENTATION clause in prompt');
+    assert.ok(/dedicated git worktree/.test(p), 'expected worktree framing');
+    assert.ok(
+      /absolute path into a parent, sibling, or canonical checkout/.test(p),
+      'expected parent/sibling absolute-path prohibition'
+    );
+  }
+});
+
+test('orientation clause carves out user-scope ~/.claude files', () => {
+  const p = buildPrompt({ type: 'issue', value: '42' }, {});
+  assert.ok(/~\/\.claude\//.test(p), 'expected ~/.claude/ carve-out so memory writes are not forbidden');
 });
 
 console.log('\ndetectAuth');
@@ -676,22 +713,24 @@ test('synthesis surfaces blocked workers', () => {
 console.log('\nresolveProjectRoot');
 
 test('finds project root by walking to .claude directory', () => {
-  withTempProject(dir => {
-    assert.strictEqual(resolveProjectRoot(dir), dir);
+  withoutProjectDirEnv(() => {
+    withTempProject(dir => {
+      assert.strictEqual(resolveProjectRoot(dir), dir);
+    });
   });
 });
 
-test('CLAUDE_PROJECT_DIR takes precedence', () => {
-  withTempProject(dir => {
-    const saved = process.env.CLAUDE_PROJECT_DIR;
-    process.env.CLAUDE_PROJECT_DIR = dir;
-    try {
-      assert.strictEqual(resolveProjectRoot(), dir);
-    } finally {
-      if (saved === undefined) delete process.env.CLAUDE_PROJECT_DIR;
-      else process.env.CLAUDE_PROJECT_DIR = saved;
-    }
-  });
+test('CLAUDE_PROJECT_DIR short-circuits before the walk', () => {
+  const saved = process.env.CLAUDE_PROJECT_DIR;
+  process.env.CLAUDE_PROJECT_DIR = '/some/env/dir';
+  try {
+    // A walk from /any/hint would fall back to /any; the env var must win
+    // first, proving the short-circuit fires before any walk.
+    assert.strictEqual(resolveProjectRoot('/any/hint'), '/some/env/dir');
+  } finally {
+    if (saved === undefined) delete process.env.CLAUDE_PROJECT_DIR;
+    else process.env.CLAUDE_PROJECT_DIR = saved;
+  }
 });
 
 test('symlink guard rejects symlinked .claude/', () => {
@@ -879,6 +918,39 @@ test('WORKER_ENV_ALLOWLIST includes PATH, HOME, ANTHROPIC_API_KEY', () => {
   assert.ok(WORKER_ENV_ALLOWLIST.includes('PATH'));
   assert.ok(WORKER_ENV_ALLOWLIST.includes('HOME'));
   assert.ok(WORKER_ENV_ALLOWLIST.includes('ANTHROPIC_API_KEY'));
+});
+
+// #796: a worker's project root must always be its own worktree. The
+// orchestrator's CLAUDE_PROJECT_DIR is in the allowlist, so without the
+// override the worker would inherit the parent's root and every kit hook
+// (resolveProjectRoot returns it before any cwd walk) would point at the parent.
+test('buildWorkerEnv overrides inherited CLAUDE_PROJECT_DIR with the worktree', () => {
+  const saved = process.env.CLAUDE_PROJECT_DIR;
+  process.env.CLAUDE_PROJECT_DIR = '/orchestrator/root';
+  try {
+    const env = buildWorkerEnv('/repo/.claude/worktrees/dispatch-abc123');
+    assert.strictEqual(
+      env.CLAUDE_PROJECT_DIR,
+      '/repo/.claude/worktrees/dispatch-abc123'
+    );
+  } finally {
+    if (saved === undefined) delete process.env.CLAUDE_PROJECT_DIR;
+    else process.env.CLAUDE_PROJECT_DIR = saved;
+  }
+});
+
+test('buildWorkerEnv sets CLAUDE_PROJECT_DIR to the worktree when orchestrator has none', () => {
+  const saved = process.env.CLAUDE_PROJECT_DIR;
+  delete process.env.CLAUDE_PROJECT_DIR;
+  try {
+    const env = buildWorkerEnv('/repo/.claude/worktrees/dispatch-def456');
+    assert.strictEqual(
+      env.CLAUDE_PROJECT_DIR,
+      '/repo/.claude/worktrees/dispatch-def456'
+    );
+  } finally {
+    if (saved !== undefined) process.env.CLAUDE_PROJECT_DIR = saved;
+  }
 });
 
 console.log('\ncheckExistingPlan (#280)');
@@ -1653,6 +1725,111 @@ test('cleanupOrphanWorktrees returns empty when git worktree list fails', () => 
     const r = cleanupOrphanWorktrees(dir, { spawnSync: sp, cwd: dir, minAgeMs: 0 });
     assert.deepStrictEqual(r, { removed: [], failed: [] });
   });
+});
+
+console.log('\ncleanupWorktree reap guard (#791)');
+
+test('cleanupWorktree refuses to reap a worktree whose worker pid is still alive', () => {
+  withTempProject((dir) => {
+    const wtPath = path.join(dir, '.claude/worktrees/dispatch-live');
+    fs.mkdirSync(wtPath, { recursive: true });
+    const sp = fakeGit('');
+    const reaped = cleanupWorktree(
+      { sessionId: 'live', pid: 4242, worktreePath: wtPath, cwd: dir, branch: 'dispatch-live' },
+      dir,
+      { spawnSync: sp, pidAlive: () => true }
+    );
+    assert.strictEqual(reaped, false);
+    assert.ok(!sp.calls.some(c => c.startsWith('worktree remove')),
+      'must not git worktree remove a live worker');
+    assert.ok(!sp.calls.some(c => c.startsWith('branch -D')),
+      'must not delete the branch of a live worker');
+    assert.ok(fs.existsSync(wtPath), 'worktree retained on disk');
+  });
+});
+
+test('cleanupWorktree reaps once the worker pid is dead', () => {
+  withTempProject((dir) => {
+    const wtPath = path.join(dir, '.claude/worktrees/dispatch-dead');
+    fs.mkdirSync(wtPath, { recursive: true });
+    const sp = fakeGit('');
+    const reaped = cleanupWorktree(
+      { sessionId: 'dead', pid: 4242, worktreePath: wtPath, cwd: dir, branch: 'dispatch-dead' },
+      dir,
+      { spawnSync: sp, pidAlive: () => false }
+    );
+    assert.strictEqual(reaped, true);
+    assert.ok(sp.calls.includes(`worktree remove ${wtPath} --force`));
+    assert.ok(sp.calls.includes('branch -D dispatch-dead'));
+  });
+});
+
+test('cleanupWorktree reaps a pidless record (spawn-error path) without consulting liveness', () => {
+  withTempProject((dir) => {
+    const wtPath = path.join(dir, '.claude/worktrees/dispatch-nopid');
+    fs.mkdirSync(wtPath, { recursive: true });
+    const sp = fakeGit('');
+    const reaped = cleanupWorktree(
+      { sessionId: 'nopid', worktreePath: wtPath, cwd: dir, branch: 'dispatch-nopid' },
+      dir,
+      { spawnSync: sp, pidAlive: () => { throw new Error('pidAlive must not be called without a pid'); } }
+    );
+    assert.strictEqual(reaped, true);
+    assert.ok(sp.calls.includes(`worktree remove ${wtPath} --force`));
+  });
+});
+
+// ── #793: parent-tree contamination backstop ──
+test('parsePorcelainPaths: extracts modified + untracked + added paths', () => {
+  const set = parsePorcelainPaths(' M src/a.js\n?? docs/new.md\nA  x.txt');
+  assert.ok(set.has('src/a.js') && set.has('docs/new.md') && set.has('x.txt'));
+  assert.strictEqual(set.size, 3);
+});
+test('parsePorcelainPaths: rename takes the new path', () => {
+  const set = parsePorcelainPaths('R  old.md -> new.md');
+  assert.ok(set.has('new.md') && !set.has('old.md'));
+});
+test('parsePorcelainPaths: quoted path is unquoted', () => {
+  assert.ok(parsePorcelainPaths('?? "a b.md"').has('a b.md'));
+});
+test('parsePorcelainPaths: empty / null -> empty set', () => {
+  assert.strictEqual(parsePorcelainPaths('').size, 0);
+  assert.strictEqual(parsePorcelainPaths(null).size, 0);
+});
+test('foreignParentFiles: only files dirty now but not at baseline (the worker leak)', () => {
+  const baseline = ' M src/already-dirty.js';
+  const current = ' M src/already-dirty.js\n?? docs/worker-leak.md\n?? README-edit.md';
+  assert.deepStrictEqual(foreignParentFiles(baseline, current), ['README-edit.md', 'docs/worker-leak.md']);
+});
+test('foreignParentFiles: clean run (current == baseline) -> empty', () => {
+  assert.deepStrictEqual(foreignParentFiles(' M a.js', ' M a.js'), []);
+});
+test('foreignParentFiles: empty baseline -> all dirty files are foreign', () => {
+  assert.deepStrictEqual(foreignParentFiles('', '?? x.md\n?? y.md'), ['x.md', 'y.md']);
+});
+test('parent-contamination backstop: end-to-end vs a real git repo (excludes own edit, catches the leak, consumes baseline)', () => {
+  const cp = require('child_process');
+  const dir = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'dispatch-contam-')));
+  try {
+    cp.execFileSync('git', ['init', '-q'], { cwd: dir });
+    cp.execFileSync('git', ['config', 'user.email', 't@t'], { cwd: dir });
+    cp.execFileSync('git', ['config', 'user.name', 't'], { cwd: dir });
+    fs.writeFileSync(path.join(dir, 'tracked.txt'), 'x');
+    // mirror a real repo: dispatch's own scratch dirs are gitignored
+    fs.writeFileSync(path.join(dir, '.gitignore'), '.claude/dispatch/\n.claude/worktrees/\n');
+    cp.execFileSync('git', ['add', '.'], { cwd: dir });
+    cp.execFileSync('git', ['commit', '-qm', 'init'], { cwd: dir });
+    fs.mkdirSync(path.join(dir, '.claude/dispatch'), { recursive: true });
+    // orchestrator's own pre-existing edit — must NOT be flagged
+    fs.writeFileSync(path.join(dir, 'orchestrator-edit.txt'), 'mine');
+    captureParentBaseline(dir, dir);
+    // a worker leaks a deliverable into the parent during the run
+    fs.writeFileSync(path.join(dir, 'worker-leak.md'), 'leaked');
+    assert.deepStrictEqual(parentContamination(dir), ['worker-leak.md']);
+    // baseline consumed so a repeat synthesize doesn't re-warn
+    assert.ok(!fs.existsSync(path.join(dir, '.claude/dispatch/.parent-baseline.json')));
+    assert.deepStrictEqual(parentContamination(dir), []);
+  } finally { fs.rmSync(dir, { recursive: true, force: true }); }
 });
 
 console.log(`\n${passed} passed, ${failed} failed`);

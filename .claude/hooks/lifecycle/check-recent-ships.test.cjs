@@ -27,9 +27,17 @@ const {
   selectFreshBroken,
   formatBrokenReport,
   formatStrandedReport,
+  resolveAckFile,
+  readAcknowledged,
+  writeAcknowledged,
   BROKEN_RECENT_WINDOW_MS,
   MAX_HEALS_PER_SESSION,
+  ACK_FILE,
 } = require('./check-recent-ships.cjs');
+
+const fs = require('fs');
+const os = require('os');
+const path = require('path');
 
 let pass = 0;
 let fail = 0;
@@ -284,6 +292,43 @@ report('selectFreshBroken: empty ack returns all',
   );
   report('reportStranded: silent when nothing happened',
     logged.length === 0);
+}
+
+// ── resolveAckFile: dedup must live in repo-shared (git-common-dir) state (#820) ──
+{
+  const ack = resolveAckFile(() => '/repo/.git');
+  report('resolveAckFile: uses the git common dir',
+    ack === path.join('/repo/.git', 'claude-last-acknowledged-broken-ships'), ack);
+}
+{
+  // A relative common dir (the primary checkout reports `.git`) resolves against cwd.
+  const ack = resolveAckFile(() => '.git');
+  report('resolveAckFile: resolves a relative common dir to absolute',
+    ack === path.join(path.resolve('.git'), 'claude-last-acknowledged-broken-ships'), ack);
+}
+{
+  // git unavailable -> fall back to the per-checkout path (pre-existing behavior).
+  const ack = resolveAckFile(() => null);
+  report('resolveAckFile: falls back to ACK_FILE when git is unavailable',
+    ack === ACK_FILE, ack);
+}
+{
+  // The invariant: two worktrees of one repo share the common dir, so they
+  // resolve to the SAME ack path — the dedup is shared, not per-worktree.
+  const a = resolveAckFile(() => '/main/.git');
+  const b = resolveAckFile(() => '/main/.git');
+  report('resolveAckFile: sibling worktrees share one ack path',
+    a === b && a === path.join('/main/.git', 'claude-last-acknowledged-broken-ships'));
+}
+{
+  // Round-trip through the real fs: written ack set is read back intact.
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ack-'));
+  const ackFile = path.join(dir, 'claude-last-acknowledged-broken-ships');
+  writeAcknowledged(new Set(['1', '2']), ackFile);
+  const back = readAcknowledged(ackFile);
+  report('writeAcknowledged/readAcknowledged: round-trip preserves the set',
+    back.has('1') && back.has('2') && back.size === 2);
+  try { fs.rmSync(dir, { recursive: true, force: true }); } catch { /* best effort */ }
 }
 
 console.log(`\n${pass} passed, ${fail} failed`);

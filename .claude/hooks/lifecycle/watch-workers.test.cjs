@@ -19,10 +19,12 @@ const {
   buildWorkerLabel,
   parseEventLine,
   formatEventLine,
+  prUrlMatchesRepo,
   shouldStreamEvent,
   hasResultEvent,
   lastResultSubtype,
   lastToolName,
+  oneLineSummary,
   shouldStampSkipOnDiscovery,
   classifyLifecycle,
   formatLifecycleNotification,
@@ -109,18 +111,32 @@ report('formatEventLine: tool_use',
   formatEventLine('6445d2b8', { kind: 'tool_use', name: 'Bash' }) === '[6445d2b8] tool_use:Bash');
 report('formatEventLine: tool_error',
   formatEventLine('6445d2b8', { kind: 'tool_error' }) === '[6445d2b8] tool error');
-report('formatEventLine: pr_url',
+report('formatEventLine: pr_url is advisory "PR (seen)" (#792 — authoritative PR is the done line)',
   formatEventLine('6445d2b8', { kind: 'pr_url', url: 'github.com/foo/bar/pull/42' })
-  === '[6445d2b8] PR: github.com/foo/bar/pull/42');
-report('formatEventLine: result',
-  formatEventLine('6445d2b8', { kind: 'result', subtype: 'success', cost: '1.23' })
-  === '[6445d2b8] done status=success cost=$1.23');
+  === '[6445d2b8] PR (seen): github.com/foo/bar/pull/42');
+report('formatEventLine: result -> null (done streams from lifecycleScan with the rich label, #788)',
+  formatEventLine('6445d2b8', { kind: 'result', subtype: 'success', cost: '1.23' }) === null);
 report('formatEventLine: null event -> null',
   formatEventLine('6445d2b8', null) === null);
 
+// ── prUrlMatchesRepo (#792) ──
+report('prUrlMatchesRepo: own-repo PR matches',
+  prUrlMatchesRepo('github.com/LuisLadino/cosmo/pull/333', 'LuisLadino/cosmo') === true);
+report('prUrlMatchesRepo: third-party cited PR does not match (the false outward-action alarm)',
+  prUrlMatchesRepo('github.com/microsoft/playwright/pull/34591', 'LuisLadino/cosmo') === false);
+report('prUrlMatchesRepo: case-insensitive owner/repo match',
+  prUrlMatchesRepo('github.com/luisladino/COSMO/pull/1', 'LuisLadino/cosmo') === true);
+report('prUrlMatchesRepo: unknown worker repo -> no match (suppress advisory)',
+  prUrlMatchesRepo('github.com/LuisLadino/cosmo/pull/333', '') === false
+  && prUrlMatchesRepo('github.com/LuisLadino/cosmo/pull/333', null) === false);
+report('prUrlMatchesRepo: non-PR / malformed URL -> no match',
+  prUrlMatchesRepo('github.com/LuisLadino/cosmo', 'LuisLadino/cosmo') === false
+  && prUrlMatchesRepo('', 'LuisLadino/cosmo') === false
+  && prUrlMatchesRepo(null, 'LuisLadino/cosmo') === false);
+
 // ── shouldStreamEvent ──
-report('shouldStreamEvent: result streams by default',
-  shouldStreamEvent('result', false) === true);
+report('shouldStreamEvent: result no longer streams from the live tail (#788 — lifecycleScan owns the done line)',
+  shouldStreamEvent('result', false) === false);
 report('shouldStreamEvent: pr_url streams by default',
   shouldStreamEvent('pr_url', false) === true);
 report('shouldStreamEvent: tool_use suppressed by default (#634 flood guard)',
@@ -201,6 +217,16 @@ report('classifyLifecycle: idle wins over crashed when both true this tick',
   classifyLifecycle({ hasResult: false, ageSecs: 400, pid: 100, pidAlive: false }).action === 'idle');
 report('classifyLifecycle: combined skipIdle + skipCrashed on stale prior-session file -> none (#483 guard)',
   classifyLifecycle({ hasResult: false, ageSecs: 9999, pid: 100, pidAlive: false, skipIdle: true, skipCrashed: true }).action === 'none');
+// #791: a result event while the worker process is still alive is a premature
+// (subagent/workflow) result, not the worker's terminal one — do not signal done.
+report('classifyLifecycle: result present but worker still alive -> none (#791 premature-done guard)',
+  classifyLifecycle({ hasResult: true, ageSecs: 0, pid: 100, pidAlive: true }).action === 'none');
+report('classifyLifecycle: result present + pid dead -> done (true terminal)',
+  classifyLifecycle({ hasResult: true, ageSecs: 0, pid: 100, pidAlive: false }).action === 'done');
+report('classifyLifecycle: result present + pid unknown -> done (degrades to legacy when liveness unknown)',
+  classifyLifecycle({ hasResult: true, ageSecs: 0, pid: null }).action === 'done');
+report('classifyLifecycle: alive worker with result but stale mtime still falls through to idle, not done (#791)',
+  classifyLifecycle({ hasResult: true, ageSecs: 400, pid: 100, pidAlive: true }).action === 'idle');
 
 // ── formatLifecycleNotification ──
 report('formatLifecycleNotification: done',
@@ -209,6 +235,12 @@ report('formatLifecycleNotification: done',
 report('formatLifecycleNotification: done with no subtype',
   formatLifecycleNotification({ action: 'done', label: 'claude-kit#445' })
   === 'claude-kit#445: done unknown');
+report('formatLifecycleNotification: done with summary + cost (#788)',
+  formatLifecycleNotification({ action: 'done', label: 'claude-kit#445', subtype: 'success', summary: 'Fixed the label bug', cost: '4.07' })
+  === 'claude-kit#445: done success — Fixed the label bug  cost=$4.07');
+report('formatLifecycleNotification: done with authoritative PR (#792)',
+  formatLifecycleNotification({ action: 'done', label: 'claude-kit#445', subtype: 'success', summary: 'Fixed it', cost: '4.07', pr: 'github.com/LuisLadino/cosmo/pull/329' })
+  === 'claude-kit#445: done success — Fixed it  PR: github.com/LuisLadino/cosmo/pull/329  cost=$4.07');
 report('formatLifecycleNotification: idle',
   formatLifecycleNotification({ action: 'idle', label: 'claude-kit#445', tool: 'Bash' })
   === 'claude-kit#445: idle>5m on Bash');
@@ -223,8 +255,21 @@ report('formatLifecycleNotification: crashed without pid',
   === 'claude-kit#445: crashed');
 
 // ── formatLifecycleStreamLine ──
-report('formatLifecycleStreamLine: done -> null (live tail already announced)',
-  formatLifecycleStreamLine({ action: 'done', label: 'claude-kit#445' }) === null);
+report('formatLifecycleStreamLine: done -> rich label + status (#788)',
+  formatLifecycleStreamLine({ action: 'done', label: 'claude-kit#445', subtype: 'success' })
+  === '[claude-kit#445] done success');
+report('formatLifecycleStreamLine: done with summary + cost',
+  formatLifecycleStreamLine({ action: 'done', label: 'claude-kit#445', subtype: 'success', summary: 'Posted plan, 3 decisions', cost: '4.07' })
+  === '[claude-kit#445] done success — Posted plan, 3 decisions  cost=$4.07');
+report('formatLifecycleStreamLine: done with authoritative PR (#792)',
+  formatLifecycleStreamLine({ action: 'done', label: 'claude-kit#445', subtype: 'success', summary: 'Shipped', cost: '4.07', pr: 'github.com/LuisLadino/cosmo/pull/329' })
+  === '[claude-kit#445] done success — Shipped  PR: github.com/LuisLadino/cosmo/pull/329  cost=$4.07');
+report('formatLifecycleStreamLine: done with PR but no summary -> no dangling dash (#792)',
+  formatLifecycleStreamLine({ action: 'done', label: 'claude-kit#445', subtype: 'success', cost: '0.50', pr: 'github.com/LuisLadino/cosmo/pull/329' })
+  === '[claude-kit#445] done success  PR: github.com/LuisLadino/cosmo/pull/329  cost=$0.50');
+report('formatLifecycleStreamLine: done with no summary -> no dangling dash',
+  formatLifecycleStreamLine({ action: 'done', label: 'claude-kit#445', subtype: 'success', cost: '0.50' })
+  === '[claude-kit#445] done success  cost=$0.50');
 report('formatLifecycleStreamLine: idle',
   formatLifecycleStreamLine({ action: 'idle', label: 'claude-kit#445', tool: 'Bash' })
   === '[claude-kit#445] idle>5m on Bash');
@@ -252,6 +297,18 @@ report('ghIssueViewArgs: null value -> null',
   ghIssueViewArgs({ value: null, repo: '' }) === null);
 report('ghIssueViewArgs: empty value -> null',
   ghIssueViewArgs({ value: '', repo: '' }) === null);
+
+// ── oneLineSummary ──
+report('oneLineSummary: passes a short summary through',
+  oneLineSummary({ summary: 'Posted plan, 3 decisions to review' }) === 'Posted plan, 3 decisions to review');
+report('oneLineSummary: takes only the first line of a multi-line summary',
+  oneLineSummary({ summary: 'First line.\nSecond line ignored.' }) === 'First line.');
+report('oneLineSummary: truncates beyond the cap with an ellipsis',
+  oneLineSummary({ summary: 'x'.repeat(200) }, 20) === 'x'.repeat(17) + '...');
+report('oneLineSummary: missing/empty summary -> empty string',
+  oneLineSummary({}) === '' && oneLineSummary(null) === '' && oneLineSummary({ summary: '   ' }) === '');
+report('oneLineSummary: non-string summary -> empty string',
+  oneLineSummary({ summary: 42 }) === '');
 
 console.log(`\n${pass} passed, ${fail} failed`);
 process.exit(fail > 0 ? 1 : 0);

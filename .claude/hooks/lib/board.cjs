@@ -103,6 +103,31 @@ function classifyByHeuristic(text, workstreams) {
   return { slug: top.slug, name: top.name, score: top.score, confident: top.score > runnerUp };
 }
 
+// ───────────────────────── Pure: lane resolution ───────────────────────────
+
+// Resolve an operator-typed lane token to a workstream slug. Accepts the
+// numeric `tag` (the concise cross-project form — `/board 4`), the exact slug,
+// or the exact display name (case-insensitive). yaml-mini returns the tag as a
+// string, so the compare is string-based. Returns null when nothing matches so
+// the caller can show the available lanes instead of failing silently — the
+// cross-session "operations lane" miss this fixes (#777).
+function resolveLane(token, workstreams) {
+  if (token == null) return null;
+  const t = String(token).trim();
+  if (!t) return null;
+  const list = Array.isArray(workstreams) ? workstreams : [];
+  if (/^\d+$/.test(t)) {
+    const byTag = list.find(w => w && w.tag != null && String(w.tag) === t);
+    if (byTag) return byTag.slug;
+  }
+  const lower = t.toLowerCase();
+  const bySlug = list.find(w => w && typeof w.slug === 'string' && w.slug.toLowerCase() === lower);
+  if (bySlug) return bySlug.slug;
+  const byName = list.find(w => w && typeof w.name === 'string' && w.name.toLowerCase() === lower);
+  if (byName) return byName.slug;
+  return null;
+}
+
 // ───────────────────────── Pure: directive selectors ───────────────────────
 
 function decorate(issue) {
@@ -116,12 +141,16 @@ function decorate(issue) {
   };
 }
 
-// Launchable = ready to fire in a fresh workspace: not blocked, not already
-// in progress, and either explicitly Ready or High priority. Mirrors cosmo's
-// "priority:High stage:Backlog,Ready" launchable view, generalized.
+// Launchable = ready to fire in a fresh workspace: not blocked, not deferred,
+// not already in progress, and either explicitly Ready or High priority.
+// Mirrors cosmo's "priority:High stage:Backlog,Ready" launchable view,
+// generalized. `deferred` is a deliberate operator set-aside (distinct from
+// `blocked`, a dependency wait): excluded unconditionally — even at High
+// priority — so a deferred issue drops off the recommendation surface until
+// the operator un-defers it. See board-coordination.md.
 function isLaunchable(d) {
   if (!d) return false;
-  if (d.stage === 'blocked' || d.stage === 'in-progress') return false;
+  if (d.stage === 'blocked' || d.stage === 'in-progress' || d.stage === 'deferred') return false;
   return d.stage === 'ready' || d.priority === 'high';
 }
 
@@ -150,6 +179,7 @@ function laneSummary(issues, workstreams) {
   const decorated = (issues || []).map(decorate);
   const order = (workstreams || []).map(w => w.slug);
   const byName = new Map((workstreams || []).map(w => [w.slug, w.name || w.slug]));
+  const byTag = new Map((workstreams || []).map(w => [w.slug, w.tag != null ? w.tag : null]));
   const groups = new Map();
   for (const slug of order) groups.set(slug, []);
   const unlaned = [];
@@ -167,10 +197,12 @@ function laneSummary(issues, workstreams) {
     const launchable = sorted.filter(isLaunchable);
     lanes.push({
       slug,
+      tag: byTag.has(slug) ? byTag.get(slug) : null,
       name: byName.get(slug) || slug,
       total: sorted.length,
       launchable: launchable.length,
       blocked: sorted.filter(d => d.stage === 'blocked').length,
+      deferred: sorted.filter(d => d.stage === 'deferred').length,
       inProgress: sorted.filter(d => d.stage === 'in-progress').length,
       highPriority: sorted.filter(d => d.priority === 'high').length,
       top: launchable[0] || sorted[0] || null,
@@ -205,7 +237,7 @@ function buildDirective(issues, workstreams) {
   const safe = parallelSafeLanes(lanes);
   return {
     recommended: safe[0] || ranked[0] || null,
-    parallelSafe: safe.map(l => ({ slug: l.slug, name: l.name, launchable: l.launchable, top: l.top })),
+    parallelSafe: safe.map(l => ({ tag: l.tag, slug: l.slug, name: l.name, launchable: l.launchable, top: l.top })),
     lanes: ranked,
     unlaned,
   };
@@ -303,10 +335,20 @@ function cli(argv, { run = defaultRun, log = console.log } = {}) {
       return 0;
     }
     case 'lane': {
-      const slug = argv[3];
+      const requested = argv[3];
+      const slug = resolveLane(requested, workstreams);
+      if (!slug) {
+        log(JSON.stringify({
+          slug: null,
+          requested: requested != null ? String(requested) : null,
+          error: 'unknown lane',
+          available: workstreams.map(w => ({ tag: w.tag != null ? w.tag : null, slug: w.slug, name: w.name })),
+        }, null, 2));
+        return 0;
+      }
       const issues = listOpenIssues({ run });
       const { lanes } = laneSummary(issues, workstreams);
-      const lane = lanes.find(l => l.slug === slug) || { slug, name: slug, total: 0, launchable: 0, issues: [] };
+      const lane = lanes.find(l => l.slug === slug) || { slug, tag: null, name: slug, total: 0, launchable: 0, issues: [] };
       log(JSON.stringify(lane, null, 2));
       return 0;
     }
@@ -330,6 +372,8 @@ if (require.main === module) {
     priorityFromLabels, isLaned,
     // classification
     classifyByHeuristic,
+    // lane resolution
+    resolveLane,
     // directive selectors
     decorate, isLaunchable, priorityRank, rankIssue, sortIssues,
     laneSummary, rankLanes, parallelSafeLanes, buildDirective,

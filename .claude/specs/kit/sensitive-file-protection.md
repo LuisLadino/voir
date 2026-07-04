@@ -36,7 +36,7 @@ Live example: a dispatch worker in PR #181 hit the Write gate on `~/.claude/sett
 
 ## Enforcement
 
-`.claude/hooks/safety/block-sensitive-bash-writes.cjs` runs as a PreToolUse hook on Bash (registered in `~/.claude/settings.json`). It strips heredoc bodies, tokenizes the command with quote awareness, and resolves write destinations per command shape. If any destination matches a protected path, the hook exits 2 with a message naming the pattern and target. Quoted strings are treated as literal data, so a path inside `--body`, `--message`, a heredoc body, or any other quoted argument is never treated as a write destination on its own.
+`.claude/hooks/safety/block-sensitive-bash-writes.cjs` runs as a PreToolUse hook on Bash (registered in `~/.claude/settings.json`). It strips heredoc bodies using the shared `stripHeredocs` from `command-position.cjs` in preserve-operator mode so same-line redirect targets survive (#769), tokenizes the command with quote awareness, and resolves write destinations per command shape. If any destination matches a protected path, the hook exits 2 with a message naming the pattern and target. Quoted strings are treated as literal data, so a path inside `--body`, `--message`, a heredoc body, or any other quoted argument is never treated as a write destination on its own.
 
 Covered bypass patterns:
 - `>` and `>>` redirect to a protected path

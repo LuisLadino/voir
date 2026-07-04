@@ -23,8 +23,6 @@ const runtime = require('../lib/skill-runtime.cjs');
 
 const BYTES_PER_TOKEN = 4;
 
-runStdinHook(handleHook, { mode: 'observability' });
-
 function serialize(resp) {
   if (resp == null) return '';
   if (typeof resp === 'string') return resp;
@@ -67,3 +65,9 @@ function handleHook(data) {
   }
   process.exit(0);
 }
+
+if (require.main === module) {
+  runStdinHook(handleHook, { mode: 'observability' });
+}
+
+module.exports = { handleHook, serialize };

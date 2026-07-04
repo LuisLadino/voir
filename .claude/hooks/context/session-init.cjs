@@ -22,6 +22,10 @@ const {
 } = require('../lib/session-utils.cjs');
 
 const SYNC_STATE_PATH = '.claude/specs/.sync-state.json';
+// Committed companion to the gitignored .sync-state.json. /sync-stack writes
+// both into the same specs dir; stack-config.yaml is tracked, so it survives
+// into a fresh git worktree where .sync-state.json (gitignored) does not.
+const STACK_CONFIG_PATH = path.join(path.dirname(SYNC_STATE_PATH), 'stack-config.yaml');
 
 const WATCHED_FILES = [
   // JavaScript/TypeScript
@@ -83,20 +87,28 @@ function getFileHash(filePath) {
   }
 }
 
-function loadSyncState() {
+function loadSyncState(cwd) {
   try {
-    const content = fs.readFileSync(SYNC_STATE_PATH, 'utf8');
+    const content = fs.readFileSync(path.join(cwd, SYNC_STATE_PATH), 'utf8');
     return JSON.parse(content);
   } catch {
     return null;
   }
 }
 
-function checkForChanges() {
-  const cwd = process.cwd();
-  const syncState = loadSyncState();
+function checkForChanges(cwd = process.cwd()) {
+  const syncState = loadSyncState(cwd);
 
   if (!syncState) {
+    // .sync-state.json is gitignored, so it is absent in every fresh git
+    // worktree even when the project is fully synced. Gate the "never synced"
+    // warning on the absence of committed sync evidence (stack-config.yaml),
+    // not on the per-worktree marker — otherwise a worktree-heavy setup
+    // (Conductor) re-fires the warning on every new worktree and trains the
+    // user to ignore it, masking a genuinely un-synced project. See #812.
+    if (fs.existsSync(path.join(cwd, STACK_CONFIG_PATH))) {
+      return { changed: false };
+    }
     // Check for any dependency manifest, not just package.json
     const manifests = ['package.json', 'pyproject.toml', 'Cargo.toml', 'go.mod', 'Package.swift', 'Gemfile', 'composer.json', 'build.gradle', 'pom.xml', 'mix.exs'];
     const hasManifest = manifests.some(m => fs.existsSync(path.join(cwd, m)));
@@ -181,9 +193,6 @@ function recordStartingBranch(cwd, sessionId) {
   } catch {}
 }
 
-const { runStdinHook } = require('../lib/stdin-hook.cjs');
-runStdinHook(handleHook, { mode: 'observability' });
-
 function handleHook(data) {
   const { source } = data;
   const cwd = process.cwd();
@@ -209,7 +218,7 @@ function handleHook(data) {
   }
 
   // Check for project changes
-  const result = checkForChanges();
+  const result = checkForChanges(cwd);
   if (result.changed) {
     console.log('\n========================================');
     console.log('PROJECT CHANGES DETECTED');
@@ -224,3 +233,10 @@ function handleHook(data) {
 
   process.exit(0);
 }
+
+if (require.main === module) {
+  const { runStdinHook } = require('../lib/stdin-hook.cjs');
+  runStdinHook(handleHook, { mode: 'observability' });
+}
+
+module.exports = { checkForChanges, loadSyncState };
