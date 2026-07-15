@@ -10,6 +10,7 @@ applies_to:
   - ".claude/hooks/safety/enforce-skills.cjs"
   - ".claude/hooks/safety/enforce-plan.cjs"
   - ".claude/hooks/safety/check-spec-conformance.cjs"
+  - ".claude/hooks/safety/check-yaml-validity.cjs"
   - ".claude/hooks/safety/concurrent-session-gate.cjs"
   - ".claude/hooks/safety/block-dangerous.cjs"
   - ".claude/hooks/safety/block-sensitive-bash-writes.cjs"

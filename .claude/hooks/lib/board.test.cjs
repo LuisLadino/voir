@@ -238,11 +238,37 @@ test('buildDirective drops a deferred-only lane from parallelSafe but keeps it v
     issue(2, 'context', 'deferred', 'high'),   // deferred, not a dependency block
   ];
   const d = B.buildDirective(issues, WS);
+  assert.strictEqual(d.recommended.slug, 'workflow'); // launchable lane wins; deferred sibling never over-nulls (#912)
   const safeSlugs = d.parallelSafe.map(l => l.slug);
   assert.ok(safeSlugs.includes('workflow'));
   assert.ok(!safeSlugs.includes('context'));   // 0 launchable → not parallel-safe
   const ctx = d.lanes.find(l => l.slug === 'context');
   assert.strictEqual(ctx.deferred, 1);         // still in the breakdown
+});
+
+test('buildDirective recommends null when no lane has launchable work (#912)', () => {
+  // Deferred + low-priority backlog only — nothing launchable anywhere. The
+  // recommendation must be null, never a fallback to a deferred/non-launchable
+  // issue (the pre-fix `|| ranked[0]` bug surfaced the deferred one).
+  const issues = [
+    issue(1, 'workflow', 'deferred', 'medium'),
+    issue(2, 'workflow', 'backlog', 'low'),
+    issue(3, 'context', 'backlog', 'low'),
+  ];
+  const d = B.buildDirective(issues, WS);
+  assert.strictEqual(d.recommended, null);
+  assert.deepStrictEqual(d.parallelSafe, []);  // no launchable lane is parallel-safe
+  // The issues stay visible in the breakdown — they leave the recommendation, not the board.
+  assert.strictEqual(d.lanes.find(l => l.slug === 'workflow').deferred, 1);
+  assert.strictEqual(d.lanes.reduce((n, l) => n + l.total, 0), 3);
+});
+
+test('buildDirective recommends null for an only-blocked and for an empty board (#912)', () => {
+  const blockedOnly = B.buildDirective([issue(1, 'workflow', 'blocked', 'high')], WS);
+  assert.strictEqual(blockedOnly.recommended, null); // blocked is not launchable
+  const empty = B.buildDirective([], WS);
+  assert.strictEqual(empty.recommended, null);       // no issues at all, no throw
+  assert.deepStrictEqual(empty.parallelSafe, []);
 });
 
 // ── IO edge (injected) ──

@@ -18,6 +18,9 @@ const path = require('path');
 
 const TMP_HOME = fs.mkdtempSync(path.join(os.tmpdir(), 'skill-active-home-'));
 process.env.HOME = TMP_HOME;
+// This suite's sandbox is the fake HOME; drop the runner's projects-dir
+// override so PROJECTS_DIR derives from TMP_HOME as the fixtures expect (#889).
+delete process.env.CLAUDE_PROJECTS_DIR;
 
 const { activeExtendedSkills, resolveScope } = require('./skill-active.cjs');
 const { appendTrackingEvent, _resetRecentStateCache } = require('./session-utils.cjs');

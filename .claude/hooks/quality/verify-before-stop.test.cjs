@@ -21,6 +21,7 @@ const {
   extractLastAssistantText,
   isSkillComplete,
   getIncompleteSkills,
+  formatIncompleteSkillsMessage,
   buildSentinelRegex,
   getRepoRoot,
   isInsideRepo,
@@ -188,6 +189,52 @@ try {
     `got ${JSON.stringify(dispatchNamespaced)}`
   );
 
+  // board is registered with a board.cjs bash signal, same shape as dispatch.
+  const boardNoBash = isSkillComplete('/board', [], new Set());
+  report(
+    'board without board.cjs bash is incomplete',
+    boardNoBash.complete === false,
+    `got ${JSON.stringify(boardNoBash)}`
+  );
+  const boardWithBash = isSkillComplete('/board', ['node .claude/hooks/lib/board.cjs directive'], new Set());
+  report(
+    'board with board.cjs bash is complete',
+    boardWithBash.complete === true,
+    `got ${JSON.stringify(boardWithBash)}`
+  );
+  const boardNamespaced = isSkillComplete('/project-management:board', ['node .claude/hooks/lib/board.cjs lane 2'], new Set());
+  report(
+    'plugin-namespaced board with board.cjs bash is complete',
+    boardNamespaced.complete === true,
+    `got ${JSON.stringify(boardNamespaced)}`
+  );
+
+  // verify is registered with a find-stale-addresses.cjs bash signal (#900).
+  const verifyNoBash = isSkillComplete('/verify', [], new Set());
+  report(
+    '#900: verify without find-stale-addresses bash is incomplete',
+    verifyNoBash.complete === false,
+    `got ${JSON.stringify(verifyNoBash)}`
+  );
+  const verifyWithBash = isSkillComplete(
+    '/verify',
+    ['node .claude/skills/verify/find-stale-addresses.cjs --all-ages --json'],
+    new Set()
+  );
+  report(
+    '#900: verify with find-stale-addresses bash is complete',
+    verifyWithBash.complete === true,
+    `got ${JSON.stringify(verifyWithBash)}`
+  );
+
+  // audit is exempt: agent-spawning analysis skill, mirrors review (#900).
+  const auditBare = isSkillComplete('/utilities:audit', [], new Set());
+  report(
+    '#900: utilities:audit is complete via exempt',
+    auditBare.complete === true,
+    `got ${JSON.stringify(auditBare)}`
+  );
+
   // #231: learn is exempt. Cognitive explanation skill, surfaces in response.
   const learnBare = isSkillComplete('/learn', [], new Set());
   report(
@@ -232,6 +279,47 @@ try {
     '#231: unregistered skill in current scope still tripwires once',
     drift.length === 1 && drift[0].skill === '/novel-skill',
     `got ${JSON.stringify(drift)}`
+  );
+  // #902: that tripwire is now SATISFIABLE — the drift item names the sentinel
+  // echo as the concrete action instead of a null, unclearable expectation.
+  report(
+    '#902: unregistered drift names the sentinel echo as its expected action',
+    drift[0].expected === "echo 'SKILL_COMPLETE: novel-skill'",
+    `got ${JSON.stringify(drift[0])}`
+  );
+  // #902: emitting that sentinel clears the gate for the unregistered skill.
+  const scopedCustomComplete = { tools: [
+    { tool: 'Skill', skill: 'novel-skill' },
+    { tool: 'Bash', command: "echo 'SKILL_COMPLETE: novel-skill'" }
+  ] };
+  report(
+    '#902: unregistered skill clears the gate once its sentinel is emitted',
+    getIncompleteSkills(scopedCustomComplete).length === 0,
+    `got ${JSON.stringify(getIncompleteSkills(scopedCustomComplete))}`
+  );
+
+  // #895: a Bash command whose completion signal sits past the 100-char display
+  // truncation still clears the gate, because the tail signal is preserved in
+  // the event's `signals` field. The `command` here is the truncated head (no
+  // git push visible); `signals` carries the extracted `git push` from the tail.
+  const commitTail = { tools: [
+    { tool: 'Skill', skill: 'commit' },
+    { tool: 'Bash', command: 'git add ' + 'p/'.repeat(50) + '...', signals: ['git push'] }
+  ] };
+  report(
+    '#895: /commit clears when git push is preserved in the signals tail',
+    getIncompleteSkills(commitTail).length === 0,
+    `got ${JSON.stringify(getIncompleteSkills(commitTail))}`
+  );
+  // #895: without the preserved signal (truncated head only), the bug reproduces.
+  const commitTruncatedOnly = { tools: [
+    { tool: 'Skill', skill: 'commit' },
+    { tool: 'Bash', command: 'git add ' + 'p/'.repeat(50) + '...' }
+  ] };
+  report(
+    '#895: truncated head alone still trips (proves the signals field is load-bearing)',
+    getIncompleteSkills(commitTruncatedOnly).length === 1,
+    `got ${JSON.stringify(getIncompleteSkills(commitTruncatedOnly))}`
   );
 
   // #231: null tracking, no session, returns [] without throwing.
@@ -581,6 +669,69 @@ try {
     '#838: JS `this.console.log(` (non-word char before keyword) is still flagged',
     checkForDebugStatements(jsThis, null).length === 1,
     `got ${JSON.stringify(checkForDebugStatements(jsThis, null))}`
+  );
+
+  // #906: a registered skill's INCOMPLETE message surfaces the SKILL_COMPLETE
+  // sentinel as a fallback, with the natural signal still listed first.
+  const researchMsg = formatIncompleteSkillsMessage([
+    { skill: '/research', ...isSkillComplete('research', [], new Set()) }
+  ]);
+  const researchText = researchMsg.join('\n');
+  report(
+    '#906: registered skill surfaces the sentinel fallback echo',
+    researchText.includes("echo 'SKILL_COMPLETE: research'"),
+    researchText
+  );
+  report(
+    '#906: natural signal is listed before the sentinel fallback (forcing function primary)',
+    researchText.indexOf('Expected:') < researchText.indexOf("echo 'SKILL_COMPLETE: research'"),
+    researchText
+  );
+
+  // #906: an unregistered skill already shows the echo as its Expected (#902),
+  // so it must NOT get a second, redundant fallback line.
+  const briefMsg = formatIncompleteSkillsMessage([
+    { skill: '/brief', ...isSkillComplete('brief', [], new Set()) }
+  ]).join('\n');
+  report(
+    '#906: unregistered skill shows the echo once (no redundant fallback line)',
+    (briefMsg.match(/SKILL_COMPLETE: brief/g) || []).length === 1,
+    briefMsg
+  );
+
+  // #906: the sentinel names the normalized skill (namespace + slash stripped).
+  const boardMsg = formatIncompleteSkillsMessage([
+    { skill: '/project-management:board', ...isSkillComplete('project-management:board', [], new Set()) }
+  ]).join('\n');
+  report(
+    '#906: sentinel fallback uses the normalized skill name',
+    boardMsg.includes("echo 'SKILL_COMPLETE: board'"),
+    boardMsg
+  );
+
+  // #906: lock the full extracted structure for a multi-skill message (header,
+  // per-item blocks, footer) so a future edit can't drift the footer into the
+  // loop or reorder the block. Mixes a registered + an unregistered skill.
+  const multi906 = formatIncompleteSkillsMessage([
+    { skill: '/research', ...isSkillComplete('research', [], new Set()) },
+    { skill: '/brief', ...isSkillComplete('brief', [], new Set()) }
+  ]);
+  const expectedMulti = [
+    'INCOMPLETE SKILL INVOCATION:',
+    '',
+    '/research — no completion signal detected.',
+    '  Expected: external inquiry (WebSearch, WebFetch, context7), the Grep/Glob tools, or a bash content search (rg, git grep, grep -r, ag)',
+    "  Or, if that already ran but wasn't recorded: echo 'SKILL_COMPLETE: research'",
+    '/brief — no completion signal detected.',
+    "  Expected: echo 'SKILL_COMPLETE: brief'",
+    '',
+    'If you completed the skill, execute the expected action.',
+    'If you abandoned it intentionally, state that and stop.'
+  ];
+  report(
+    '#906: multi-skill message has the exact header/per-item/footer structure',
+    JSON.stringify(multi906) === JSON.stringify(expectedMulti),
+    JSON.stringify(multi906)
   );
 
 } finally {

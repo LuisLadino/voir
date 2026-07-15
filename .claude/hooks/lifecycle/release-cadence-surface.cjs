@@ -5,11 +5,12 @@
  *
  * Event: SessionStart
  * Purpose: Surface a non-blocking reminder to cut a release when CHANGELOG
- * `[Unreleased]` has crossed the cadence threshold. `/commit` appends every
- * feature and fix there but never closes it, so without this the block grows
- * unbounded — the ~460-entry accumulation #756 cleaned up. CONTRIBUTING.md
- * "Releases" documents the cadence; this makes the crossing enforced, not just
- * documented. See #873.
+ * `[Unreleased]` plus pending `changelog.d/` fragments have crossed the cadence
+ * threshold. `/commit` records every feature and fix (as a fragment) but never
+ * closes the running log, so without this the block grows unbounded — the
+ * ~460-entry accumulation #756 cleaned up. `.claude/specs/kit/releases.md`
+ * documents the cadence; this makes the crossing enforced, not just documented.
+ * See #873.
  *
  * Silent when:
  *   - No CHANGELOG.md in the repo root (projects without a changelog)

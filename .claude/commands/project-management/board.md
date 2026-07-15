@@ -25,9 +25,20 @@ The most-used mode. You read the live board and tell the operator what to open n
 node .claude/hooks/lib/board.cjs directive
 ```
 
-This emits JSON: `recommended` (the lane to open), `parallelSafe` (lanes safe to run simultaneously), `lanes` (full per-lane breakdown, ranked), `unlaned` (the triage inbox). It reads `gh issue list`, so it is always current.
+This emits JSON: `recommended` (the lane to open, or `null` when nothing is launchable), `parallelSafe` (lanes safe to run simultaneously), `lanes` (full per-lane breakdown, ranked), `unlaned` (the triage inbox). It reads `gh issue list`, so it is always current.
 
-Narrate it like this, leading with the call:
+When `recommended` is `null`, there is no launchable work — any open issues are deferred, blocked, or low-priority backlog (or the board is empty). Do NOT invent a lane to open. Narrate the honest state instead:
+
+```
+Nothing launchable right now.
+Deferred (set aside): <deferred issues by lane, with numbers — omit when zero>.
+Held (blocked): <lanes whose top issue is blocked, with the blocker — omit when zero>.
+Backlog (low priority, not auto-recommended): <the remaining low-priority issues by lane — omit when zero>.
+```
+
+If there are no open issues at all, say the board is clear rather than listing empty buckets.
+
+Otherwise `recommended` is a lane; narrate it like this, leading with the call:
 
 ```
 Open a workspace for **<recommended.name>** (lane <recommended.tag>) — <launchable> launchable, top is #<n> (<title>, <priority>).

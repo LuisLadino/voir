@@ -43,7 +43,7 @@ test('surfaces [RELEASE] when [Unreleased] is at/over the default threshold', ()
     assert.strictEqual(r.exitCode, 0, `stderr: ${r.stderr}`);
     assert.ok(r.stdout.includes('[RELEASE]'), `expected [RELEASE], got: ${r.stdout}`);
     assert.ok(r.stdout.includes('31'), 'names the count');
-    assert.ok(r.stdout.includes('CONTRIBUTING.md'), 'points at the steps');
+    assert.ok(r.stdout.includes('.claude/specs/kit/releases.md'), 'points at the synced releases spec (#924)');
   });
 });
 

@@ -35,6 +35,9 @@ const REPO = path.resolve(__dirname, '../..');
 const SANDBOX_HOME = fs.mkdtempSync(path.join(os.tmpdir(), 'enforce-test-home-'));
 process.env.HOME = SANDBOX_HOME;
 delete process.env.USERPROFILE;
+// This suite's sandbox is the fake HOME; drop the runner's projects-dir
+// override so PROJECTS_DIR derives from SANDBOX_HOME as the fixtures expect (#889).
+delete process.env.CLAUDE_PROJECTS_DIR;
 
 const { appendTrackingEvent, readTrackingEvents, getTrackingDir } = require('./lib/session-utils.cjs');
 

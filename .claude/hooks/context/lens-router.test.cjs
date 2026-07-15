@@ -16,6 +16,16 @@
 const fs = require('fs');
 const path = require('path');
 
+// Malformed-registry cases below exercise lens-registry's logError path, and
+// the phase cases write tracking events — both through session-utils'
+// PROJECTS_DIR. Scope it before any kit require so a direct `node <this file>`
+// run stays hermetic; under the test runner the env is already set (#889).
+if (!process.env.CLAUDE_PROJECTS_DIR) {
+  process.env.CLAUDE_PROJECTS_DIR = fs.mkdtempSync(
+    path.join(require('os').tmpdir(), 'lens-router-projects-')
+  );
+}
+
 const { phaseAllowsAttachment } = require('../lib/phase.cjs');
 
 let pass = 0;

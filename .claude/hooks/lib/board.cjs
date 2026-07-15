@@ -236,7 +236,11 @@ function buildDirective(issues, workstreams) {
   const ranked = rankLanes(lanes);
   const safe = parallelSafeLanes(lanes);
   return {
-    recommended: safe[0] || ranked[0] || null,
+    // Only ever recommend a lane that has launchable work. Falling back to
+    // ranked[0] would surface a deferred or otherwise non-launchable issue as
+    // the recommendation (its lane `top` is `sorted[0]` when nothing is
+    // launchable), which contradicts the deferred-exclusion rule (#912).
+    recommended: safe[0] || null,
     parallelSafe: safe.map(l => ({ tag: l.tag, slug: l.slug, name: l.name, launchable: l.launchable, top: l.top })),
     lanes: ranked,
     unlaned,

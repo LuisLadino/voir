@@ -8,6 +8,14 @@ const { spawnSync } = require('child_process');
 
 const HOOK = path.resolve(__dirname, 'enforce-voice.cjs');
 
+// Spawned hooks write tracking through session-utils' PROJECTS_DIR. Scope it
+// so a direct `node <this file>` run stays hermetic; under the test runner
+// the env is already set (#889).
+if (!process.env.CLAUDE_PROJECTS_DIR) {
+  process.env.CLAUDE_PROJECTS_DIR =
+    fs.mkdtempSync(path.join(os.tmpdir(), 'enforce-voice-projects-'));
+}
+
 let passed = 0;
 let failed = 0;
 
@@ -758,7 +766,16 @@ paths:
       tool_name: 'Write',
       tool_input: { file_path: target, content: 'Internal memory note.' },
       session_id: 's-mem'
-    }, { cwd: cwdDir, env: { HOME: fakeHome } });
+    }, {
+      cwd: cwdDir,
+      // The skip-zone derives from PROJECTS_DIR, which the runner's override
+      // outranks HOME for — point the override at the fake tree so this case
+      // actually travels the skip branch under npm test (#889).
+      env: {
+        HOME: fakeHome,
+        CLAUDE_PROJECTS_DIR: path.join(fakeHome, '.claude/projects')
+      }
+    });
     try {
       assert.strictEqual(r.exitCode, 0, `expected allow, got ${r.exitCode} stderr=${r.stderr}`);
     } finally {

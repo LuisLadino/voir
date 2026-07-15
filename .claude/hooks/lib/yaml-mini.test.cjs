@@ -267,5 +267,77 @@ test('flow sequence with a null item', () => {
   assert.deepStrictEqual(parse('k: [a, null, b]\n'), { k: ['a', null, 'b'] });
 });
 
+// --- strict mode (#892) ---
+
+function assertStrictThrows(src, wantLine) {
+  let err;
+  try { parse(src, { strict: true }); } catch (e) { err = e; }
+  assert.ok(err, `expected strict parse to throw for: ${JSON.stringify(src)}`);
+  if (wantLine !== undefined) {
+    assert.strictEqual(err.line, wantLine, `expected .line ${wantLine}, got ${err.line}`);
+  }
+}
+
+test('strict: lenient default is unchanged — nested colon-space still parses', () => {
+  // The exact construct #892 was filed against: lenient mode does not throw.
+  assert.doesNotThrow(() => parse('note: agent latency (in: 0.1s, out: 0.2s)\n'));
+});
+
+test('strict: blocks a nested ": " in a map value (the motivating case)', () => {
+  assertStrictThrows('note: agent latency (in: 0.1s, out: 0.2s)\n', 1);
+});
+
+test('strict: a single ": " in a sequence item is a valid map, not blocked', () => {
+  // `- key: value` is a legitimate map-in-sequence; only a SECOND ": " is the error.
+  assert.doesNotThrow(() => parse('components:\n  - agent latency (in: 0.1s)\n', { strict: true }));
+});
+
+test('strict: blocks a second ": " in a sequence-item value (the motivating case)', () => {
+  assertStrictThrows('components:\n  - agent latency (in: 0.1s, out: 0.2s)\n', 2);
+});
+
+test('strict: blocks a duplicate key in a map', () => {
+  assertStrictThrows('a: 1\nb: 2\na: 3\n', 3);
+});
+
+test('strict: blocks a duplicate key inside a sequence map item', () => {
+  assertStrictThrows('list:\n  - k: 1\n    k: 2\n', 3);
+});
+
+test('strict: the error carries a numeric .line', () => {
+  let err;
+  try { parse('a: b: c\n', { strict: true }); } catch (e) { err = e; }
+  assert.strictEqual(typeof err.line, 'number');
+});
+
+test('strict: accepts a valid single-colon map-in-sequence', () => {
+  assert.deepStrictEqual(parse('list:\n  - key: value\n', { strict: true }), { list: [{ key: 'value' }] });
+});
+
+test('strict: accepts a colon with no following space (url)', () => {
+  assert.deepStrictEqual(parse('url: http://example.com\n', { strict: true }), { url: 'http://example.com' });
+});
+
+test('strict: accepts a quoted value containing ": "', () => {
+  assert.deepStrictEqual(parse('note: "a: b"\n', { strict: true }), { note: 'a: b' });
+});
+
+test('strict: accepts a flow-map value with inner colons (valid YAML)', () => {
+  assert.doesNotThrow(() => parse('exit_codes: { 0: allow, 2: deny }\n', { strict: true }));
+});
+
+test('strict: accepts a flow-sequence value', () => {
+  assert.deepStrictEqual(parse('triggers: [a, b]\n', { strict: true }), { triggers: ['a', 'b'] });
+});
+
+test('strict: blocks an unterminated flow map (invalid YAML)', () => {
+  assertStrictThrows('x: { 0: allow\n', 1);
+});
+
+test('strict: repeated key across distinct nested maps is allowed', () => {
+  const src = 'a:\n  k: 1\nb:\n  k: 2\n';
+  assert.deepStrictEqual(parse(src, { strict: true }), { a: { k: '1' }, b: { k: '2' } });
+});
+
 console.log(`\n${passed} passed, ${failed} failed`);
 process.exit(failed > 0 ? 1 : 0);

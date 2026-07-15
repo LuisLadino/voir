@@ -9,6 +9,7 @@ const {
   DEFAULT_THRESHOLD,
   resolveThreshold,
   countUnreleasedEntries,
+  countFragmentEntries,
   readUnreleasedCount,
   shouldPromptReleaseCut,
   releaseCutMessage,
@@ -160,12 +161,57 @@ test('reads and counts a present CHANGELOG.md', () => {
 
 console.log('\nreleaseCutMessage');
 
-test('names the count, the threshold, and points at CONTRIBUTING.md', () => {
+test('names the count, the threshold, and points at the synced releases spec', () => {
   const msg = releaseCutMessage(31, 30);
   assert.ok(msg.includes('31'), 'includes count');
   assert.ok(msg.includes('30'), 'includes threshold');
-  assert.ok(/CONTRIBUTING\.md/.test(msg), 'points at CONTRIBUTING.md');
+  assert.ok(/\.claude\/specs\/kit\/releases\.md/.test(msg), 'points at the synced releases spec, not the unsynced CONTRIBUTING.md (#924)');
+  assert.ok(!/CONTRIBUTING\.md/.test(msg), 'does not dangle at the unsynced CONTRIBUTING.md');
   assert.ok(msg.startsWith('[RELEASE]'), 'tagged [RELEASE]');
+});
+
+console.log('\ncountFragmentEntries');
+
+test('returns 0 when changelog.d is absent', () => {
+  withTempProject((dir) => {
+    assert.strictEqual(countFragmentEntries(dir), 0);
+  });
+});
+
+test('sums top-level bullets across fragments, ignoring README and sub-bullets', () => {
+  withTempProject((dir) => {
+    const fdir = path.join(dir, 'changelog.d');
+    fs.mkdirSync(fdir);
+    fs.writeFileSync(path.join(fdir, 'README.md'), '- not counted\n');
+    fs.writeFileSync(path.join(fdir, 'a.md'), '### Added\n- **one**\n- **two**\n  - sub, not counted\n');
+    fs.writeFileSync(path.join(fdir, 'b.md'), '### Fixed\n- **three**\n');
+    assert.strictEqual(countFragmentEntries(dir), 3);
+  });
+});
+
+test('a malformed fragment (bullets with no ### subsection) counts 0, matching the assembler', () => {
+  withTempProject((dir) => {
+    const fdir = path.join(dir, 'changelog.d');
+    fs.mkdirSync(fdir);
+    // Bullets present, but no recognized `### subsection` — the assembler would
+    // leave this fragment in place rather than fold it, so it must not inflate cadence.
+    fs.writeFileSync(path.join(fdir, 'bad.md'), '- **orphan bullet, no header**\n- **another orphan**\n');
+    fs.writeFileSync(path.join(fdir, 'good.md'), '### Security\n- **advisory (#1)**\n');
+    assert.strictEqual(countFragmentEntries(dir), 1, 'only the well-formed Security entry counts');
+  });
+});
+
+test('readUnreleasedCount combines changelog and fragment counts', () => {
+  withTempProject((dir) => {
+    fs.writeFileSync(path.join(dir, 'CHANGELOG.md'), KIT_STYLE);
+    const fdir = path.join(dir, 'changelog.d');
+    fs.mkdirSync(fdir);
+    fs.writeFileSync(path.join(fdir, 'x.md'), '### Added\n- **frag entry (#9)**\n');
+    const result = readUnreleasedCount(dir);
+    assert.strictEqual(result.changelogCount, 4);
+    assert.strictEqual(result.fragmentCount, 1);
+    assert.strictEqual(result.count, 5);
+  });
 });
 
 console.log(`\n${passed} passed, ${failed} failed`);

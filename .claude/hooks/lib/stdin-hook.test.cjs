@@ -11,6 +11,12 @@ const assert = require('assert');
 
 const HELPER = path.resolve(__dirname, 'stdin-hook.cjs');
 
+// This suite's sandbox is a fake HOME passed per-spawn; drop the runner's
+// projects-dir override so spawned hooks derive PROJECTS_DIR from that fake
+// HOME as the tracking-tree assertions expect (#889). runHook spreads
+// process.env, so deleting here covers every child.
+delete process.env.CLAUDE_PROJECTS_DIR;
+
 let passed = 0;
 let failed = 0;
 

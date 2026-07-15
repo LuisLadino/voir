@@ -39,9 +39,12 @@ function reduceSkillWindows(events, endTimestamp) {
 
   function closeWindow(ts) {
     if (!openWindow) return;
+    // Include each Bash event's preserved `signals` alongside its truncated
+    // `command`, so a completion token in a compound-command tail counts here
+    // exactly as it does in verify-before-stop (#895).
     const bashCommands = openWindow.tools
       .filter((t) => t.tool === 'Bash' && typeof t.command === 'string')
-      .map((t) => t.command);
+      .flatMap((t) => [t.command, ...(Array.isArray(t.signals) ? t.signals : [])]);
     const usedTools = new Set(openWindow.tools.map((t) => t.tool));
     const { complete } = skillPatterns.isSkillComplete(
       openWindow.skill_name,
@@ -120,7 +123,7 @@ function reduceSkillWindows(events, endTimestamp) {
     if (!openWindow) continue;
 
     if (ev.type === 'tool') {
-      openWindow.tools.push({ tool: ev.tool, command: ev.command });
+      openWindow.tools.push({ tool: ev.tool, command: ev.command, signals: ev.signals });
       openWindow.tool_success_count += 1;
       continue;
     }
