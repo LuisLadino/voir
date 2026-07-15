@@ -62,6 +62,8 @@ hooks/context/voice-identity.test.cjs
 hooks/enforcement.test.cjs
 hooks/lib/board.cjs
 hooks/lib/board.test.cjs
+hooks/lib/changelog-assemble.cjs
+hooks/lib/changelog-assemble.test.cjs
 hooks/lib/command-position.cjs
 hooks/lib/command-position.strippers.test.cjs
 hooks/lib/command-position.test.cjs
@@ -89,6 +91,7 @@ hooks/lib/regex.cjs
 hooks/lib/release-cadence.cjs
 hooks/lib/release-cadence.test.cjs
 hooks/lib/session-utils.cjs
+hooks/lib/session-utils.projects-dir.test.cjs
 hooks/lib/session-utils.strip.test.cjs
 hooks/lib/shared-memory.cjs
 hooks/lib/shared-memory.test.cjs
@@ -118,6 +121,8 @@ hooks/lib/worktree.cjs
 hooks/lib/worktree.test.cjs
 hooks/lib/yaml-mini.cjs
 hooks/lib/yaml-mini.test.cjs
+hooks/lib/yaml-validity.cjs
+hooks/lib/yaml-validity.test.cjs
 hooks/lifecycle/board-sweep.cjs
 hooks/lifecycle/board-sweep.test.cjs
 hooks/lifecycle/check-recent-ships.cjs
@@ -144,6 +149,8 @@ hooks/safety/block-sensitive-bash-writes.cjs
 hooks/safety/block-sensitive-bash-writes.test.cjs
 hooks/safety/check-spec-conformance.cjs
 hooks/safety/check-spec-conformance.test.cjs
+hooks/safety/check-yaml-validity.cjs
+hooks/safety/check-yaml-validity.test.cjs
 hooks/safety/concurrent-session-gate.cjs
 hooks/safety/concurrent-session-gate.test.cjs
 hooks/safety/enforce-plan.cjs
@@ -164,6 +171,7 @@ hooks/tracking/detect-pivot.cjs
 hooks/tracking/subagent-tracker.cjs
 hooks/tracking/tool-failure.cjs
 hooks/tracking/tool-tracker.cjs
+hooks/tracking/tool-tracker.integration.test.cjs
 hooks/tracking/track-changes.cjs
 hooks/tracking/track-spec-reads.cjs
 hooks/tracking/tracking.test.cjs
@@ -263,6 +271,7 @@ specs/kit/instruction-format.md
 specs/kit/kit-eval.md
 specs/kit/mcp-configuration.md
 specs/kit/owasp-mapping.md
+specs/kit/releases.md
 specs/kit/self-documentation.md
 specs/kit/sensitive-file-protection.md
 specs/kit/session-isolation.md

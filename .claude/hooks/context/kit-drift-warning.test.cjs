@@ -103,6 +103,85 @@ test('evaluate flags a file removed upstream (BEHIND)', () => {
   });
 });
 
+// #891: a manifest file written to disk but gitignored (unanchored build/)
+// can never be committed. It must surface as CANNOT COMMIT with the offending
+// rule named, and must NOT be mislabeled BEHIND ("committed file differs").
+test('evaluate flags a gitignored untracked manifest file (CANNOT COMMIT, #891)', () => {
+  withDownstreamAndKit(({ kit, work }) => {
+    // Kit copy deliberately DIFFERS from the downstream copy: without the
+    // exclusion, sameContent would put the file in BEHIND, so this fixture
+    // is what makes the not-mislabeled-BEHIND assertion mutation-killing.
+    fs.mkdirSync(path.join(kit, '.claude', 'skills', 'build'), { recursive: true });
+    fs.writeFileSync(path.join(kit, '.claude', 'skills', 'build', 'SKILL.md'), 'build skill v2\n');
+    fs.appendFileSync(path.join(kit, 'kit-paths.conf'), 'dir skills\n');
+    fs.mkdirSync(path.join(work, '.claude', 'skills', 'build'), { recursive: true });
+    fs.writeFileSync(path.join(work, '.claude', 'skills', 'build', 'SKILL.md'), 'build skill\n');
+    fs.appendFileSync(path.join(work, '.claude', '.kit-manifest'), 'skills/build/SKILL.md\n');
+    fs.writeFileSync(path.join(work, '.gitignore'), 'build/\n');
+
+    const v = evaluate(work, kit);
+    assert.ok(v, 'expected a verdict');
+    assert.deepStrictEqual(v.untrackable.map(u => u.file), ['skills/build/SKILL.md']);
+    assert.ok(/build\//.test(v.untrackable[0].rule), `rule names the pattern, got ${v.untrackable[0].rule}`);
+    assert.ok(!v.behind.includes('skills/build/SKILL.md'), 'untrackable file must not be mislabeled BEHIND');
+  });
+});
+
+test('untrackable signal is skipped in a client-mode repo (#891)', () => {
+  withDownstreamAndKit(({ kit, work }) => {
+    fs.mkdirSync(path.join(work, '.claude', 'skills', 'build'), { recursive: true });
+    fs.writeFileSync(path.join(work, '.claude', 'skills', 'build', 'SKILL.md'), 'build skill\n');
+    fs.appendFileSync(path.join(work, '.claude', '.kit-manifest'), 'skills/build/SKILL.md\n');
+    fs.writeFileSync(path.join(work, '.gitignore'), 'build/\n');
+    fs.writeFileSync(path.join(work, '.claude', 'kit-mode.yaml'), 'mode: client\n');
+
+    const v = evaluate(work, kit);
+    assert.ok(!v || v.untrackable.length === 0,
+      `client-mode .claude/ is excluded by design, got ${JSON.stringify(v && v.untrackable)}`);
+  });
+});
+
+test('untrackable signal degrades to empty outside a git repo (#891)', () => {
+  const dir = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'kdw-nogit-')));
+  try {
+    fs.mkdirSync(path.join(dir, '.claude', 'skills', 'build'), { recursive: true });
+    fs.writeFileSync(path.join(dir, '.claude', 'skills', 'build', 'SKILL.md'), 'build skill\n');
+    fs.writeFileSync(path.join(dir, '.claude', '.kit-manifest'), 'skills/build/SKILL.md\n');
+    const v = evaluate(dir, null);
+    assert.ok(!v || (v.untrackable || []).length === 0);
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('evaluate reports no untrackable when the rule is anchored (#891)', () => {
+  withDownstreamAndKit(({ kit, work }) => {
+    fs.mkdirSync(path.join(work, '.claude', 'skills', 'build'), { recursive: true });
+    fs.writeFileSync(path.join(work, '.claude', 'skills', 'build', 'SKILL.md'), 'build skill\n');
+    fs.appendFileSync(path.join(work, '.claude', '.kit-manifest'), 'skills/build/SKILL.md\n');
+    fs.writeFileSync(path.join(work, '.gitignore'), '/build/\n');
+
+    const v = evaluate(work, kit);
+    // The file is untracked but committable; it may drift BEHIND (added
+    // upstream is separate) but must not be CANNOT COMMIT.
+    assert.ok(!v || v.untrackable.length === 0);
+  });
+});
+
+test('warningText renders the CANNOT COMMIT block with the offending rule (#891)', () => {
+  const t = warningText({
+    projectName: 'space-names',
+    uncommitted: [],
+    behind: [],
+    untrackable: [{ file: 'skills/build/SKILL.md', rule: '.gitignore:9:build/' }],
+    kitSource: '/k'
+  });
+  assert.ok(t.includes('CANNOT COMMIT: 1'));
+  assert.ok(t.includes('.claude/skills/build/SKILL.md'));
+  assert.ok(t.includes('.gitignore:9:build/'));
+  assert.ok(t.includes('`build/`'));
+});
+
 test('evaluate flags an uncommitted kit file in the working tree (UNCOMMITTED)', () => {
   withDownstreamAndKit(({ kit, work }) => {
     fs.writeFileSync(path.join(work, '.claude', 'CLAUDE.md'), 'kit instructions v2 LOCAL EDIT\n');

@@ -176,5 +176,27 @@ report(
   JSON.stringify(p4)
 );
 
+// #895: a Bash event whose completion signal lives past the display truncation
+// still completes the window, via the preserved `signals` field. `command` is
+// the truncated head (no git push); `signals` carries the extracted tail token.
+const s895 = reduceSkillWindows([
+  { type: 'tool', tool: 'Skill', skill: 'commit', timestamp: '2026-05-01T10:00:01Z' },
+  { type: 'tool', tool: 'Bash', command: 'git add a/b/c...', signals: ['git push'], timestamp: '2026-05-01T10:00:02Z' },
+], null);
+report(
+  '#895: window completes when git push is preserved in the signals tail',
+  s895.length === 1 && s895[0].skill_name === 'commit' && s895[0].completed === true,
+  JSON.stringify(s895)
+);
+const s895bug = reduceSkillWindows([
+  { type: 'tool', tool: 'Skill', skill: 'commit', timestamp: '2026-05-01T10:00:01Z' },
+  { type: 'tool', tool: 'Bash', command: 'git add a/b/c...', timestamp: '2026-05-01T10:00:02Z' },
+], null);
+report(
+  '#895: same window without the signals field stays incomplete (field is load-bearing)',
+  s895bug.length === 1 && s895bug[0].completed === false,
+  JSON.stringify(s895bug)
+);
+
 console.log(`\n${pass} passed, ${fail} failed`);
 process.exit(fail > 0 ? 1 : 0);

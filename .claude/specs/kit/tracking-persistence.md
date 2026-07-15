@@ -36,6 +36,8 @@ The fix: append-only JSONL event log, one line per event. `fs.appendFileSync` is
 
 One file per session. Extension is `.jsonl`, one JSON object per line. Legacy `.json` files from before this refactor get swept by `cleanupOldSessions` after 7 days.
 
+The projects root is `CLAUDE_PROJECTS_DIR` when set, else `~/.claude/projects`. The override is a test seam honored by both the write side in `session-utils.cjs` and the read side in `collect-analyze-data.cjs`; `scripts/run-tests.cjs` points it at a fresh temp dir per suite so `npm test` never writes hook-errors.log lines or tracking events into the real tree (#889). It is load-bearing for suite hermeticity — do not remove it as a simplification.
+
 ## Event Schema
 
 Every line is a JSON object with a `timestamp` in ISO-8601 and a `type`. The rest of the fields are event-specific.
@@ -46,6 +48,8 @@ Every line is a JSON object with a `timestamp` in ISO-8601 and a `type`. The res
 {"timestamp": "2026-04-18T15:30:05.200Z", "type": "file_change", "tool": "Edit", "file": "src/foo.ts", "op": "modify"}
 ```
 
+A Bash `tool` event's `command` is truncated to 100 chars for a compact display log. Completion detection must not depend on that truncated copy: a signal like `git push` or a `SKILL_COMPLETE: <name>` sentinel can sit in a compound-command tail past 100 chars, or after a multi-KB heredoc body, where no fixed head-cap could preserve it (#895). So `tool-tracker` extracts the completion signals from the **full** command at capture time via `skill-patterns.extractCommandSignals` and records them as a `signals` array on the event (present only when non-empty). `verify-before-stop` and `skill-telemetry` read `[command, ...signals]`, so any completion signal present anywhere in the full command is preserved for detection, not just the head. Old events lacking `signals` fall back to the truncated command — the pre-fix behavior — so no session regresses. `extractCommandSignals` stores each matched substring, so its patterns keep their gaps bounded (no `.*`): an unbounded gap would let a long, possibly secret-bearing span into the log and make the scan quadratic on a large command.
+
 ### Recognized event types
 
 Observability events (consumed by `readTrackingState`):
@@ -53,7 +57,7 @@ Observability events (consumed by `readTrackingState`):
 | type | Producer | Key fields |
 |---|---|---|
 | `session_init` | `initSession` in `session-utils.cjs` | `workspace` |
-| `tool` | `tool-tracker.cjs` | `tool`, plus tool-specific fields |
+| `tool` | `tool-tracker.cjs` | `tool`, plus tool-specific fields; Bash carries a truncated `command` + a `signals` array (#895) |
 | `command` | `command-log.cjs` | `command`, `exitCode`, `stdout` |
 | `file_change` | `track-changes.cjs` | `tool`, `file`, `op` |
 | `failure` | `tool-failure.cjs` | `tool`, `failureKind`, `error` |
@@ -154,11 +158,11 @@ Malformed lines from partial writes on crash are silently skipped. Readers MUST 
 
 - **Registered with a completion rule** (`registered: true`, `exempt: false`), e.g. `commit`, `build`, `test`, `research`, `plan`, `dispatch`. Completion is measurable. Report completion and fallback rates.
 - **Exempt** (`registered: true`, `exempt: true`), e.g. `review`, `define`, `ideate`, and the lens skills. They complete by definition: `isSkillComplete` returns `complete: true` unconditionally, so `completed` is always true and `fallback_used` always false. A completion rate is a constant 100% and carries no signal.
-- **Unregistered** (`registered: false`, `exempt: false`), no entry in the table, e.g. `/verify`, `/audit`. `isSkillComplete` returns `complete: false`, so a raw `completed` count is always 0. That zero means "no completion is defined," not "the skill failed."
+- **Unregistered** (`registered: false`, `exempt: false`), no entry in the table, e.g. `/cost` or a downstream project-custom skill. There is no completion *rule*, so no rate is measurable. A Skill-tool invocation of an unregistered skill still trips verify-before-stop's drift tripwire (#231), but the tripwire is **satisfiable**: `isSkillComplete` computes the `SKILL_COMPLETE: <name>` sentinel for unregistered skills too (#902, before which the sentinel sat behind registration and left the gate unclearable), and the Stop message names that echo as the expected action. For a kit skill someone forgot to register, the resolution is still the registration decision (rule, exempt, or consciously accept the tripwire), as done for `board` (#896) and `verify`/`audit` (#900); for a genuinely project-custom skill the sentinel is the completion contract. A raw `completed` count is therefore sentinel-driven, not a hard 0 — but it is still not a measured rate.
 
-Consumers MUST NOT report a completion or fallback rate for exempt or unregistered skills. Doing so reads as a false degradation (unregistered: a hard 0%) or a meaningless constant (exempt: a hard 100%). The measurable set is exactly `registered && !exempt`. `applied` counts and the tool-success ratio stay meaningful for all three states. The reference renderer is `formatTelemetrySkillLine` in `scripts/collect-analyze-data.cjs`: it tags `(exempt)` / `(unregistered)` and suppresses the rate lines for both.
+Consumers MUST NOT report a completion or fallback rate for exempt or unregistered skills. Doing so reads as noise (unregistered: no completion rule, so a sentinel-driven `completed` count is not a rate) or a meaningless constant (exempt: a hard 100%). The measurable set is exactly `registered && !exempt`. `applied` counts and the tool-success ratio stay meaningful for all three states. The reference renderer is `formatTelemetrySkillLine` in `scripts/collect-analyze-data.cjs`: it tags `(exempt)` / `(unregistered)` and suppresses the rate lines for both.
 
-**Two windowers, on purpose.** `readSkillTelemetryState` is prompt-scoped: it resets at every `prompt_start`, returns only the last prompt's windows, and returns `[]` when no `prompt_start` was written. That fits Stop-time and current-turn reads. The `/analyze` aggregator needs the opposite, every window across every prompt and every session including subagent sessions that never write a `prompt_start`, and it works from a raw events array per file rather than a resolved `(sessionId, workspacePath)` pair. So `collect-analyze-data.cjs` segments on `prompt_start`, runs the identical window logic per segment, keeps all records, then sums the per-window booleans into per-skill counts. The completion rule is shared via `skill-patterns`; only the windowing differs, and it differs on purpose. Hoisting the shared windower into a lib both sides call would touch enforcement-critical `session-utils` and is tracked in #614.
+**Two windowers, on purpose.** `readSkillTelemetryState` is prompt-scoped: it resets at every `prompt_start`, returns only the last prompt's windows, and returns `[]` when no `prompt_start` was written. That fits Stop-time and current-turn reads. The `/analyze` aggregator needs the opposite, every window across every prompt and every session including subagent sessions that never write a `prompt_start`, and it works from a raw events array per file rather than a resolved `(sessionId, workspacePath)` pair. So `collect-analyze-data.cjs` segments on `prompt_start`, runs the identical window logic per segment, keeps all records, then sums the per-window booleans into per-skill counts. The windower itself is shared: both `session-utils.readSkillTelemetryState` and `collect-analyze-data.cjs` call `reduceSkillTelemetry`/`reduceSkillWindows` in `hooks/lib/skill-telemetry.cjs` (hoisted in #614), so only the segmentation mode differs, and the completion rule is shared via `skill-patterns`. Because both consumers go through that one windower, the `signals`-aware completion read (#895) covers the aggregator too, not just Stop-time enforcement.
 
 ## Anti-Patterns
 

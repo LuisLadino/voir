@@ -5,6 +5,15 @@ const fs = require('fs');
 const os = require('os');
 const path = require('path');
 
+// Malformed-registry cases below exercise voice-registry's logError path,
+// which writes through session-utils' PROJECTS_DIR. Scope it before the
+// require so a direct `node <this file>` run stays hermetic; under the test
+// runner the env is already set (#889).
+if (!process.env.CLAUDE_PROJECTS_DIR) {
+  process.env.CLAUDE_PROJECTS_DIR =
+    fs.mkdtempSync(path.join(os.tmpdir(), 'voice-registry-projects-'));
+}
+
 const {
   resolveVoice,
   registryHasPathRules,

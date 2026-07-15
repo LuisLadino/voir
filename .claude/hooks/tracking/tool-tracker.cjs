@@ -14,6 +14,8 @@ const {
   appendTrackingEvent
 } = require('../lib/session-utils.cjs');
 
+const { extractCommandSignals } = require('../lib/skill-patterns.cjs');
+
 const { runStdinHook } = require('../lib/stdin-hook.cjs');
 runStdinHook(handleHook, { mode: 'observability' });
 
@@ -49,9 +51,15 @@ function handleHook(data) {
       entry.matchCount = countMatches(tool_response);
       break;
 
-    case 'Bash':
+    case 'Bash': {
+      // Truncate the display copy, but extract completion signals from the FULL
+      // command first — otherwise a signal in a compound-command tail past 100
+      // chars is invisible to verify-before-stop / skill-telemetry (#895).
       entry.command = truncate(tool_input?.command, 100);
+      const signals = extractCommandSignals(tool_input?.command);
+      if (signals.length) entry.signals = signals;
       break;
+    }
 
     case 'Task':
       entry.subagent = tool_input?.subagent_type;

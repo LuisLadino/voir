@@ -25,7 +25,11 @@ const skillTelemetry = require('./skill-telemetry.cjs');
 const { stripHeredocs } = require('./command-position.cjs');
 
 const HOME = process.env.HOME || process.env.USERPROFILE;
-const PROJECTS_DIR = path.join(HOME, '.claude/projects');
+// CLAUDE_PROJECTS_DIR mirrors the read-side seam in collect-analyze-data.cjs:
+// the test runner points it at a temp dir so suite runs never write into the
+// real ~/.claude/projects (#889).
+const PROJECTS_DIR =
+  process.env.CLAUDE_PROJECTS_DIR || path.join(HOME, '.claude/projects');
 
 // getWorkspaceKey is called 2-3 times per hook process (via getTrackingDir in
 // both getSessionId and appendTrackingEvent). Memoize per input so we only

@@ -26,7 +26,8 @@ const {
   isSkillComplete,
   buildSentinelRegex,
   skillCompletionPatterns,
-  isSkillRegistered
+  isSkillRegistered,
+  normalizeSkillName
 } = require('../lib/skill-patterns.cjs');
 
 function getInvokedCommands(tracking) {
@@ -52,9 +53,12 @@ function getInvokedCommands(tracking) {
 function getExecutedBashCommands(tracking) {
   if (!tracking || !tracking.tools) return [];
 
+  // A Bash event's `command` is display-truncated to 100 chars, but `signals`
+  // preserves the completion tokens extracted from the full command at capture
+  // time (#895). Include both so a signal in a compound-command tail is seen.
   return tracking.tools
     .filter(t => t.tool === 'Bash')
-    .map(t => t.command || '')
+    .flatMap(t => [t.command || '', ...(t.signals || [])])
     .filter(cmd => cmd);
 }
 
@@ -69,6 +73,32 @@ function getUsedToolNames(tracking) {
 // readSkillTelemetryState reducer in session-utils consume the same table so
 // the gate and the rollup never drift. Imports above re-export the symbols
 // this file's public surface promises (#347).
+
+// Render the INCOMPLETE SKILL INVOCATION block for the Stop message. Pure so
+// the message text is unit-testable independent of the on-disk tracking read.
+function formatIncompleteSkillsMessage(incomplete) {
+  const lines = ['INCOMPLETE SKILL INVOCATION:', ''];
+  for (const item of incomplete) {
+    lines.push(`${item.skill} — no completion signal detected.`);
+    if (item.expected) {
+      lines.push(`  Expected: ${item.expected}`);
+    }
+    // A registered skill accepts the SKILL_COMPLETE sentinel too, but its
+    // Expected shows only the natural signal. Surface the sentinel as the
+    // fallback for a signal that ran but wasn't recorded (a compound command,
+    // an untracked tool) so the escape is discoverable, matching how every
+    // other kit gate advertises its override (#906). The natural signal stays
+    // primary, preserving the #231 forcing function. Unregistered skills
+    // already show the echo as their Expected (#902).
+    if (isSkillRegistered(item.skill)) {
+      lines.push(`  Or, if that already ran but wasn't recorded: echo 'SKILL_COMPLETE: ${normalizeSkillName(item.skill)}'`);
+    }
+  }
+  lines.push('');
+  lines.push('If you completed the skill, execute the expected action.');
+  lines.push('If you abandoned it intentionally, state that and stop.');
+  return lines;
+}
 
 function getIncompleteSkills(tracking) {
   const invokedSkills = getInvokedCommands(tracking);
@@ -274,6 +304,7 @@ if (require.main === module) {
   module.exports = {
     isSkillComplete,
     getIncompleteSkills,
+    formatIncompleteSkillsMessage,
     buildSentinelRegex,
     skillCompletionPatterns,
     checkForStoppingSuggestions,
@@ -369,17 +400,7 @@ function handleHook(data) {
     // Command completion
     const cmdIssue = issues.find(i => i.type === 'command_completion');
     if (cmdIssue) {
-      parts.push('INCOMPLETE SKILL INVOCATION:');
-      parts.push('');
-      for (const item of cmdIssue.incomplete) {
-        parts.push(`${item.skill} — no completion signal detected.`);
-        if (item.expected) {
-          parts.push(`  Expected: ${item.expected}`);
-        }
-      }
-      parts.push('');
-      parts.push('If you completed the skill, execute the expected action.');
-      parts.push('If you abandoned it intentionally, state that and stop.');
+      parts.push(...formatIncompleteSkillsMessage(cmdIssue.incomplete));
     }
 
     // Stopping suggestions

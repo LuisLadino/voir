@@ -44,7 +44,7 @@ Before committing, verify documentation reflects the changes.
 Two routers decide what to check. The change-type router (below) covers CHANGELOG and README. The declared-path router (Step 3a-cov) covers operating docs that declared the code they document.
 
 From the diff, classify the change:
-- Feature or fix → CHANGELOG.md MUST have an entry
+- Feature or fix → a changelog **fragment** MUST be written (Step 3c-frag)
 - Structural change (new dirs, renamed modules) → README.md likely needs updating
 - API/interface change → component specs may be stale
 - New component/module → component spec may be needed (see /sync-stack Step 9)
@@ -76,13 +76,35 @@ Document current state only. NEVER describe what changed — only what IS.
 
 **Do not update:** `~/.claude/CLAUDE.md` as part of commits. That file is user-scope personal instructions, not a doc that tracks code changes. Project-level and kit-synced CLAUDE.md can be updated when the change warrants.
 
+**Step 3c-frag: Write the changelog fragment (features and fixes).**
+
+Do NOT append to CHANGELOG.md. Parallel PRs that all edit `CHANGELOG.md` `[Unreleased]` conflict on GitHub, which ignores the `merge=union` driver server-side (#921). Write a **fragment** instead — a new file named for this branch, so two open PRs never touch the same file:
+
+```bash
+mkdir -p changelog.d
+# Sanitize every filesystem-unsafe char, not just `/`. The branch's issue number
+# (per the type/N-description convention) is what makes the slug unique — two
+# branches never share an issue number, so their fragment files never collide.
+SLUG=$(git branch --show-current | sed 's#[^A-Za-z0-9._-]#-#g')
+```
+
+Write `changelog.d/$SLUG.md` with a Keep-a-Changelog-shaped body — a subsection header, then top-level `- ` bullets. Map the change to one of the six KaC types: feature → `### Added`, bug fix → `### Fixed`, behavior/structure change → `### Changed`, removal → `### Removed`, deprecation → `### Deprecated`, security fix → `### Security`. Reference the issue as `(#N)`:
+
+```markdown
+### Fixed
+
+- **Short headline (#921).** One or two sentences on what changed and why. Indented sub-bullets allowed for detail.
+```
+
+If `changelog.d/$SLUG.md` already exists (a prior commit on this same PR), append the new entry under the matching `###` in that same file rather than creating a second file. The fragment stays in `changelog.d/` until a release cut folds it into `CHANGELOG.md` `[Unreleased]` and deletes it (`.claude/specs/kit/releases.md`), which is why CHANGELOG.md itself needs no edit here.
+
 **Step 3d: If a file should exist but doesn't** (e.g., no CHANGELOG.md in a project with features), create it.
 
 **Step 3e: Report.** You MUST output a documentation check report before proceeding to Step 4:
 
 ```
 DOCUMENTATION CHECK:
-- CHANGELOG.md: [added entry / still accurate / created / N/A]
+- CHANGELOG fragment: [wrote changelog.d/<slug>.md / appended to existing / N/A]
 - README.md: [updated / still accurate / N/A]
 - Component specs: [updated X / still accurate / N/A]
 - Operating docs (covers:): [verified X / updated X / none matched]
@@ -104,13 +126,13 @@ If the conformance hook blocks the commit, fix the reported violations and re-st
 
 ### 3.6. Release Cadence Check (non-blocking)
 
-CHANGELOG `[Unreleased]` grows on every commit and must be cut into a dated version once it crosses the threshold (CONTRIBUTING.md "Releases"). After the documentation check, run the shared counter:
+CHANGELOG `[Unreleased]` grows on every commit and must be cut into a dated version once it crosses the threshold (`.claude/specs/kit/releases.md`). After the documentation check, run the shared counter:
 
 ```bash
 node .claude/hooks/lib/release-cadence.cjs
 ```
 
-If the output begins with `[RELEASE]`, `[Unreleased]` has crossed the threshold — surface that line to the user and point at CONTRIBUTING.md "Releases" for the cut steps. This is advisory: NEVER block, delay, or amend the commit for it. Otherwise the output reports below-threshold; continue.
+If the output begins with `[RELEASE]`, `[Unreleased]` has crossed the threshold — surface that line to the user and point at `.claude/specs/kit/releases.md` for the cut steps. This is advisory: NEVER block, delay, or amend the commit for it. Otherwise the output reports below-threshold; continue.
 
 ### 4. Stage and Commit
 

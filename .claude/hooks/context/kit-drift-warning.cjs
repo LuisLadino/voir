@@ -10,13 +10,18 @@
  *   writes the working tree of a canonical clone never reaches any session and
  *   the drift is silent and continuous (#736). This makes it visible.
  *
- * Two local signals:
+ * Three local signals:
  *   - UNCOMMITTED: kit-owned files are modified-but-uncommitted in this
  *     checkout. A sync wrote them here but nobody committed; worktrees read
  *     committed `main` and won't see them. This is the exact cosmo smoking gun.
  *   - BEHIND: kit-owned files committed in this checkout differ from what the
  *     kit source now ships (changed, added, or removed upstream). A fresh
  *     worktree off this `main` would run stale kit tooling.
+ *   - CANNOT COMMIT: manifest files that are on disk but untracked AND
+ *     gitignored (#891, the unanchored `build/` collision). They can never be
+ *     committed, so committed `main` silently misses them while their on-disk
+ *     content matches the kit and both other signals stay quiet — git status
+ *     porcelain excludes ignored files, so UNCOMMITTED cannot see this state.
  *
  * Discoverability only — SessionStart is context-only and cannot block. The fix
  * is `/kit-sync` in the project's own session followed by a normal `/commit`, so
@@ -39,6 +44,7 @@
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
+const { spawnSync } = require('child_process');
 
 const { dirtyFiles } = require('../lib/deploy-currency.cjs');
 
@@ -123,6 +129,38 @@ function sameContent(a, b) {
   catch { return false; } // one side missing/unreadable counts as drift
 }
 
+// Manifest files that are on disk but can never be committed: untracked AND
+// gitignored (#891). One `git check-ignore -v --stdin` batch — it consults
+// the index, so already-tracked files are never reported, and -v carries the
+// offending rule in the same call (a per-file -v loop measured 4s on a
+// 534-file manifest). Returns [{ file, rule }] with `file` relative to
+// .claude/ and `rule` as `source:line:pattern`. Best-effort: a non-git dir
+// or git failure yields []. Skipped entirely in client-mode repos, where
+// .claude/ is excluded from commits by design (client-mode.md) and every
+// manifest file would false-flag.
+function untrackableFiles(projectRoot, manifest) {
+  try {
+    const mode = fs.readFileSync(path.join(projectRoot, '.claude', 'kit-mode.yaml'), 'utf8');
+    if (/^mode:\s*client\b/m.test(mode)) return [];
+  } catch { /* no marker — personal mode */ }
+  const present = manifest.filter(rel =>
+    fs.existsSync(path.join(projectRoot, '.claude', rel)));
+  if (present.length === 0) return [];
+  const r = spawnSync('git', ['check-ignore', '-v', '--stdin'], {
+    cwd: projectRoot,
+    encoding: 'utf8',
+    input: present.map(rel => `.claude/${rel}`).join('\n')
+  });
+  if (r.status !== 0 || !r.stdout) return []; // 1 = none ignored, 128 = not a repo
+  return r.stdout.split('\n').filter(l => l.includes('\t')).map(line => {
+    const tab = line.indexOf('\t');
+    return {
+      file: line.slice(tab + 1).replace(/^\.claude\//, ''),
+      rule: line.slice(0, tab).trim() || null
+    };
+  }).sort((a, b) => a.file.localeCompare(b.file));
+}
+
 // Returns a verdict to warn on, or null when nothing is worth saying.
 // projectRoot is the downstream repo root; kitSource may be null (BEHIND off).
 function evaluate(projectRoot, kitSource = resolveKitSource()) {
@@ -136,6 +174,12 @@ function evaluate(projectRoot, kitSource = resolveKitSource()) {
     .filter(f => manifestSet.has(f))
     .map(f => f.replace(/^\.claude\//, ''))
     .sort();
+
+  // CANNOT COMMIT (#891): computed before BEHIND so these files can be
+  // excluded there — they are not "committed files that differ", they were
+  // never committable at all, and the mislabel was part of the bug.
+  const untrackable = untrackableFiles(projectRoot, manifest);
+  const untrackableSet = new Set(untrackable.map(u => u.file));
 
   // BEHIND: how the downstream's on-disk kit files compare to the kit source.
   // In a clean worktree, on-disk == committed, so this is what a fresh worktree
@@ -154,6 +198,7 @@ function evaluate(projectRoot, kitSource = resolveKitSource()) {
       // survive a missing kit-paths.conf; only added-upstream needs the walk.
       for (const rel of manifest) {
         seen.add(rel);
+        if (untrackableSet.has(rel)) continue;                     // reported as CANNOT COMMIT
         const here = path.join(projectRoot, '.claude', rel);
         const there = path.join(kitSource, '.claude', rel);
         if (!fs.existsSync(there)) { drift.add(rel); continue; }    // removed upstream
@@ -166,8 +211,8 @@ function evaluate(projectRoot, kitSource = resolveKitSource()) {
     }
   }
 
-  if (uncommitted.length === 0 && behind.length === 0) return null;
-  return { projectName: path.basename(projectRoot), uncommitted, behind, kitSource: comparedAgainst };
+  if (uncommitted.length === 0 && behind.length === 0 && untrackable.length === 0) return null;
+  return { projectName: path.basename(projectRoot), uncommitted, behind, untrackable, kitSource: comparedAgainst };
 }
 
 function warningText(verdict) {
@@ -192,6 +237,15 @@ function warningText(verdict) {
     lines.push('    A fresh worktree off this `main` runs stale kit tooling.');
     for (const f of verdict.behind.slice(0, 8)) lines.push(`      .claude/${f}`);
     if (verdict.behind.length > 8) lines.push(`      ... and ${verdict.behind.length - 8} more`);
+  }
+  const untrackable = verdict.untrackable || [];
+  if (untrackable.length > 0) {
+    lines.push(`  - CANNOT COMMIT: ${untrackable.length} kit file(s) are gitignored in this repo (#891)`);
+    lines.push('    A sync wrote these, but git ignores them: they can never be committed,');
+    lines.push('    so committed `main` and every worktree silently miss them.');
+    lines.push('    Anchor the offending rule (e.g. `build/` → `/build/`) or `git add -f` them.');
+    for (const u of untrackable.slice(0, 8)) lines.push(`      .claude/${u.file}  ← ${u.rule || 'unknown rule'}`);
+    if (untrackable.length > 8) lines.push(`      ... and ${untrackable.length - 8} more`);
   }
   lines.push('');
   if (verdict.kitSource) lines.push(`Compared against the kit source at ${verdict.kitSource} (its current checkout).`);
@@ -218,7 +272,12 @@ function run() {
   catch { return { state: 'error' }; } // never break SessionStart
   if (verdict) {
     process.stdout.write(warningText(verdict));
-    return { state: 'drift', uncommitted: verdict.uncommitted.length, behind: verdict.behind.length };
+    return {
+      state: 'drift',
+      uncommitted: verdict.uncommitted.length,
+      behind: verdict.behind.length,
+      untrackable: (verdict.untrackable || []).length
+    };
   }
   return { state: 'clear' };
 }

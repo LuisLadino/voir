@@ -28,12 +28,23 @@
  *   - Explicit indent indicators
  *
  * Throws on parse errors. Caller is expected to try/catch.
+ *
+ * Strict mode: parse(input, { strict: true }) additionally throws on two
+ * constructs lenient mode SILENTLY mis-parses — a second `: ` mapping
+ * indicator inside what is then treated as a plain scalar value (which
+ * spec-compliant parsers reject as "mapping values are not allowed in this
+ * context"), and a duplicate mapping key. It exists for the commit-time
+ * .yaml validity gate (check-yaml-validity.cjs): the gate needs these to be
+ * loud failures, not silent data corruption. Every strict throw carries a
+ * numeric `.line`. Lenient mode is the default and unchanged, so no existing
+ * consumer is affected (#892).
  */
 
-function parse(input) {
+function parse(input, opts = {}) {
   if (typeof input !== 'string') {
     throw new Error('yaml-mini: input must be a string');
   }
+  const strict = !!(opts && opts.strict);
   const rawLines = input.split('\n').map((text, i) => {
     const indent = leadingSpaces(text);
     const trimmed = text.slice(indent);
@@ -48,7 +59,7 @@ function parse(input) {
       n: i + 1
     };
   });
-  const state = { lines: rawLines, i: 0 };
+  const state = { lines: rawLines, i: 0, strict };
   skipInactive(state);
   if (state.i >= state.lines.length) return {};
   const first = state.lines[state.i];
@@ -117,6 +128,7 @@ function parseMap(state, indent) {
     if (line.content.startsWith('- ') || line.content === '-') break;
     const [key, rest] = splitKeyValue(line.content, line.n);
     state.i++;
+    assertUniqueKey(state, out, key, line.n);
     if (rest === '|') {
       out[key] = readBlockScalar(state, indent, 'literal');
     } else if (rest === '>') {
@@ -132,6 +144,7 @@ function parseMap(state, indent) {
     } else if (rest === 'null' || rest === '~') {
       out[key] = null;
     } else {
+      assertPlainScalarValue(state, rest, line.n);
       out[key] = parseScalar(rest, line.n);
     }
   }
@@ -182,6 +195,7 @@ function parseSequence(state, indent) {
     } else if (firstRest === 'null' || firstRest === '~') {
       item[firstKey] = null;
     } else {
+      assertPlainScalarValue(state, firstRest, line.n);
       item[firstKey] = parseScalar(firstRest, line.n);
     }
     while (state.i < state.lines.length) {
@@ -195,6 +209,7 @@ function parseSequence(state, indent) {
       }
       const [ck, cv] = splitKeyValue(cont.content, cont.n);
       state.i++;
+      assertUniqueKey(state, item, ck, cont.n);
       if (cv === '|') {
         item[ck] = readBlockScalar(state, itemIndent, 'literal');
       } else if (cv === '>') {
@@ -210,6 +225,7 @@ function parseSequence(state, indent) {
       } else if (cv === 'null' || cv === '~') {
         item[ck] = null;
       } else {
+        assertPlainScalarValue(state, cv, cont.n);
         item[ck] = parseScalar(cv, cont.n);
       }
     }
@@ -243,6 +259,40 @@ function findUnquotedColon(text) {
     }
   }
   return -1;
+}
+
+// Strict-mode guards. No-ops unless state.strict, so lenient callers are
+// unaffected. See the header for why these two constructs are singled out.
+function strictError(message, lineNo) {
+  const err = new Error(`yaml-mini: ${message} at line ${lineNo}`);
+  err.line = lineNo;
+  return err;
+}
+
+function assertUniqueKey(state, map, key, lineNo) {
+  if (!state.strict) return;
+  if (Object.prototype.hasOwnProperty.call(map, key)) {
+    throw strictError(`duplicate key '${key}'`, lineNo);
+  }
+}
+
+// A plain (unquoted, non-flow) scalar value must not carry its own `: ` — that
+// second mapping indicator is what a spec parser rejects as "mapping values are
+// not allowed in this context". Quoted, flow-sequence `[...]`, and flow-map
+// `{...}` values are exempt: those carry inner colons legitimately and a
+// spec-compliant parser accepts them, so flagging them would block valid YAML
+// (yaml-mini itself does not model flow maps, but strict mode must not turn that
+// gap into a false error).
+function assertPlainScalarValue(state, value, lineNo) {
+  if (!state.strict || value.length === 0) return;
+  const first = value[0];
+  const last = value[value.length - 1];
+  if (first === '"' || first === "'") return;
+  if (first === '[' && last === ']') return;
+  if (first === '{' && last === '}') return;
+  if (findUnquotedColon(value) >= 0) {
+    throw strictError(`mapping value not allowed in plain scalar (quote the value)`, lineNo);
+  }
 }
 
 function readBlockScalar(state, parentIndent, style) {

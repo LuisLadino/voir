@@ -301,6 +301,7 @@ module.exports = {
   isPrCreate,
   parsePushArgs,
   pushPlans,
+  refsForCommand,
   refExists,
   getStagedDiff,
   getPushDiff,
